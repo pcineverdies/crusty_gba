@@ -37,6 +37,17 @@ use crate::common::BitOperation;
 /// --          SPSR_fiq  SPSR_svc   SPSR_abt  SPSR_irq  SPSR_und
 /// --------------------------------------------------------------
 
+/// register_file::ConditionCodeFlag
+///
+/// enum to represent the 4 available flags in cpsr [manual, 2.13]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ConditionCodeFlag {
+    N,
+    Z,
+    C,
+    V,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RegisterFile {
     registers: Vec<u32>,
@@ -55,7 +66,7 @@ impl RegisterFile {
     ///
     /// Create the empty register file, with all the registers set to 0.
     /// This behaviour might not be the definitive one.
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             registers: vec![0; 16],
             fiq_bank: vec![0; 7],
@@ -76,7 +87,7 @@ impl RegisterFile {
     ///
     /// @param index [u32]: which of the registers to use
     /// @return [u32]: register
-    fn get_register(&self, index: u32) -> u32 {
+    pub fn get_register(&self, index: u32) -> u32 {
         let index = index as usize;
         let mode = self.cpsr.get_range(4, 0);
         match index {
@@ -86,19 +97,16 @@ impl RegisterFile {
                     self.fiq_bank[index - 8]
                 } else {
                     self.registers[index]
-}
+                }
             }
             13..=14 => match mode {
-                mode if mode == OperatingMode::SYSTEM.value()
-                    || mode == OperatingMode::USER.value() =>
-                {
-                    self.registers[index]
-                }
-                mode if mode == OperatingMode::FIQ.value() => self.fiq_bank[index - 8],
-                mode if mode == OperatingMode::SUPERVISOR.value() => self.svc_bank[index - 13],
-                mode if mode == OperatingMode::ABORT.value() => self.abt_bank[index - 13],
-                mode if mode == OperatingMode::IRQ.value() => self.irq_bank[index - 13],
-                mode if mode == OperatingMode::UND.value() => self.und_bank[index - 13],
+                mode if mode == OperatingMode::SYSTEM as u32 => self.registers[index],
+                mode if mode == OperatingMode::USER as u32 => self.registers[index],
+                mode if mode == OperatingMode::FIQ as u32 => self.fiq_bank[index - 8],
+                mode if mode == OperatingMode::SUPERVISOR as u32 => self.svc_bank[index - 13],
+                mode if mode == OperatingMode::ABORT as u32 => self.abt_bank[index - 13],
+                mode if mode == OperatingMode::IRQ as u32 => self.irq_bank[index - 13],
+                mode if mode == OperatingMode::UND as u32 => self.und_bank[index - 13],
                 _ => panic!("Illegal mode {:#05b} in cpsr", mode),
             },
             15 => self.registers[15],
@@ -113,7 +121,7 @@ impl RegisterFile {
     ///
     /// @param index [u32]: which of the registers to use
     /// @param value [u32]: new content of the register
-    fn write_register(&mut self, index: u32, value: u32) {
+    pub fn write_register(&mut self, index: u32, value: u32) {
         let mode = self.cpsr.get_range(4, 0);
         let index = index as usize;
         match index {
@@ -126,13 +134,13 @@ impl RegisterFile {
                 }
             }
             13..=14 => match mode {
-                mode if mode == OperatingMode::FIQ.value() => self.fiq_bank[index - 8] = value,
-                mode if mode == OperatingMode::SUPERVISOR.value() => {
+                mode if mode == OperatingMode::FIQ as u32 => self.fiq_bank[index - 8] = value,
+                mode if mode == OperatingMode::SUPERVISOR as u32 => {
                     self.svc_bank[index - 13] = value
                 }
-                mode if mode == OperatingMode::ABORT.value() => self.abt_bank[index - 13] = value,
-                mode if mode == OperatingMode::IRQ.value() => self.irq_bank[index - 13] = value,
-                mode if mode == OperatingMode::UND.value() => self.und_bank[index - 13] = value,
+                mode if mode == OperatingMode::ABORT as u32 => self.abt_bank[index - 13] = value,
+                mode if mode == OperatingMode::IRQ as u32 => self.irq_bank[index - 13] = value,
+                mode if mode == OperatingMode::UND as u32 => self.und_bank[index - 13] = value,
                 _ => self.registers[index] = value,
             },
             15 => self.registers[15] = value,
@@ -145,7 +153,7 @@ impl RegisterFile {
     /// Read cpsr register
     ///
     /// @return [u32]: cpsr
-    fn get_cpsr(&self) -> u32 {
+    pub fn get_cpsr(&self) -> u32 {
         self.cpsr
     }
 
@@ -155,16 +163,8 @@ impl RegisterFile {
     ///
     /// @param value [u32]: value to use
     /// @return [Result<(), ()>]: Err if the operating mode is not correct, Ok otherwise
-    fn write_cpsr(&mut self, value: u32) -> Result<(), ()> {
-        let mode = value.get_range(4, 0);
-        if mode != OperatingMode::SYSTEM.value()
-            && mode != OperatingMode::USER.value()
-            && mode != OperatingMode::FIQ.value()
-            && mode != OperatingMode::IRQ.value()
-            && mode != OperatingMode::SUPERVISOR.value()
-            && mode != OperatingMode::ABORT.value()
-            && mode != OperatingMode::UND.value()
-        {
+    pub fn write_cpsr(&mut self, value: u32) -> Result<(), ()> {
+        if !self.is_mode_correct(value) {
             return Err(());
         }
         self.cpsr = value;
@@ -177,16 +177,37 @@ impl RegisterFile {
     /// working mode
     ///
     /// @return [u32]: spsr
-    fn get_spsr(&mut self) -> u32 {
+    pub fn get_spsr(&mut self) -> u32 {
         let mode = self.cpsr.get_range(4, 0);
         match mode {
-            mode if mode == OperatingMode::FIQ.value() => self.spsr[0],
-            mode if mode == OperatingMode::SUPERVISOR.value() => self.spsr[1],
-            mode if mode == OperatingMode::ABORT.value() => self.spsr[2],
-            mode if mode == OperatingMode::IRQ.value() => self.spsr[3],
-            mode if mode == OperatingMode::UND.value() => self.spsr[4],
+            mode if mode == OperatingMode::FIQ as u32 => self.spsr[0],
+            mode if mode == OperatingMode::SUPERVISOR as u32 => self.spsr[1],
+            mode if mode == OperatingMode::ABORT as u32 => self.spsr[2],
+            mode if mode == OperatingMode::IRQ as u32 => self.spsr[3],
+            mode if mode == OperatingMode::UND as u32 => self.spsr[4],
             _ => 0,
         }
+    }
+
+    /// Registen rFile::is_mode_correct
+    ///
+    /// Check if the received value of CPSR correpsonds to a correct opearting mode
+    ///
+    /// @param [u32]: value to check
+    /// @return [bool]: result of the check
+    fn is_mode_correct(&self, value: u32) -> bool {
+        let value = value.get_range(4, 0);
+        if value != OperatingMode::SYSTEM as u32
+            && value != OperatingMode::USER as u32
+            && value != OperatingMode::FIQ as u32
+            && value != OperatingMode::IRQ as u32
+            && value != OperatingMode::SUPERVISOR as u32
+            && value != OperatingMode::ABORT as u32
+            && value != OperatingMode::UND as u32
+        {
+            return false;
+        }
+        true
     }
 
     /// RegisterFile::write_spsr
@@ -196,36 +217,62 @@ impl RegisterFile {
     ///
     /// @param value [u32]: value to use
     /// @return [Result<(), ()>]: Err if the operating mode is not correct, Ok otherwise
-    fn write_spsr(&mut self, value: u32) -> Result<(), ()> {
-        let mode = value.get_range(4, 0);
-        if mode != OperatingMode::SYSTEM.value()
-            && mode != OperatingMode::USER.value()
-            && mode != OperatingMode::FIQ.value()
-            && mode != OperatingMode::IRQ.value()
-            && mode != OperatingMode::SUPERVISOR.value()
-            && mode != OperatingMode::ABORT.value()
-            && mode != OperatingMode::UND.value()
-        {
+    pub fn write_spsr(&mut self, value: u32) -> Result<(), ()> {
+        if !self.is_mode_correct(value) {
             return Err(());
         }
 
         let mode = self.cpsr.get_range(4, 0);
         match mode {
-            mode if mode == OperatingMode::FIQ.value() => self.spsr[0] = value,
-            mode if mode == OperatingMode::SUPERVISOR.value() => self.spsr[1] = value,
-            mode if mode == OperatingMode::ABORT.value() => self.spsr[2] = value,
-            mode if mode == OperatingMode::IRQ.value() => self.spsr[3] = value,
-            mode if mode == OperatingMode::UND.value() => self.spsr[4] = value,
+            mode if mode == OperatingMode::FIQ as u32 => self.spsr[0] = value,
+            mode if mode == OperatingMode::SUPERVISOR as u32 => self.spsr[1] = value,
+            mode if mode == OperatingMode::ABORT as u32 => self.spsr[2] = value,
+            mode if mode == OperatingMode::IRQ as u32 => self.spsr[3] = value,
+            mode if mode == OperatingMode::UND as u32 => self.spsr[4] = value,
             _ => {}
         }
 
         Ok(())
+    }
+
+    /// RegisterFile::get_flag
+    ///
+    /// Get the value of the required flag from cpsr
+    ///
+    /// @param flag [ConditionCodeFlag]: flag to use
+    /// @return [bool]: value of the required flag (true if set, false otherwise)
+    pub fn is_flag_set(&self, flag: &ConditionCodeFlag) -> bool {
+        match flag {
+            ConditionCodeFlag::N => self.cpsr.get_range(31, 31) == 1,
+            ConditionCodeFlag::Z => self.cpsr.get_range(30, 30) == 1,
+            ConditionCodeFlag::C => self.cpsr.get_range(29, 29) == 1,
+            ConditionCodeFlag::V => self.cpsr.get_range(28, 28) == 1,
+        }
+    }
+
+    /// RegisterFile::get_mode
+    ///
+    /// Return the curent operating mode, based on the content of cpsr
+    ///
+    /// @return [OperatingMode]: operating mode
+    pub fn get_mode(&mut self) -> OperatingMode {
+        let mode = self.cpsr.get_range(4, 0);
+        match mode {
+            mode if mode == OperatingMode::USER as u32 => OperatingMode::USER,
+            mode if mode == OperatingMode::FIQ as u32 => OperatingMode::FIQ,
+            mode if mode == OperatingMode::IRQ as u32 => OperatingMode::IRQ,
+            mode if mode == OperatingMode::SUPERVISOR as u32 => OperatingMode::SUPERVISOR,
+            mode if mode == OperatingMode::ABORT as u32 => OperatingMode::ABORT,
+            mode if mode == OperatingMode::UND as u32 => OperatingMode::UND,
+            _ => OperatingMode::SYSTEM,
+        }
     }
 }
 
 #[cfg(test)]
 mod test_register_file {
 
+    use crate::arm7_tdmi::register_file::ConditionCodeFlag;
     use crate::arm7_tdmi::register_file::RegisterFile;
     use crate::arm7_tdmi::OperatingMode;
 
@@ -233,7 +280,7 @@ mod test_register_file {
     fn test_registers() {
         let mut rf = RegisterFile::new();
 
-        assert_eq!(rf.write_cpsr(OperatingMode::USER.value()), Ok(()));
+        assert_eq!(rf.write_cpsr(OperatingMode::USER as u32), Ok(()));
         rf.write_register(0, 0x0a);
         assert_eq!(0x0a, rf.get_register(0));
 
@@ -243,26 +290,38 @@ mod test_register_file {
         rf.write_register(15, 0x1001);
         assert_eq!(0x1001, rf.get_register(15));
 
-        assert_eq!(rf.write_cpsr(OperatingMode::IRQ.value()), Ok(()));
-        assert_eq!(rf.write_spsr(OperatingMode::SYSTEM.value()), Ok(()));
+        assert_eq!(rf.write_cpsr(OperatingMode::IRQ as u32), Ok(()));
+        assert_eq!(rf.write_spsr(OperatingMode::SYSTEM as u32), Ok(()));
         assert_eq!(0x0a, rf.get_register(0));
         assert_eq!(0x0, rf.get_register(14));
-        assert_eq!(OperatingMode::SYSTEM.value(), rf.get_spsr());
+        assert_eq!(OperatingMode::SYSTEM as u32, rf.get_spsr());
+        assert_eq!(rf.get_mode(), OperatingMode::IRQ);
 
         rf.write_register(14, 0xbe11);
         assert_eq!(0xbe11, rf.get_register(14));
         assert_eq!(0x1001, rf.get_register(15));
 
-        assert_eq!(rf.write_cpsr(OperatingMode::SYSTEM.value()), Ok(()));
+        assert_eq!(rf.write_cpsr(OperatingMode::SYSTEM as u32), Ok(()));
         assert_eq!(0x0a, rf.get_register(0));
         assert_eq!(0x7ac0, rf.get_register(14));
         assert_eq!(0x1001, rf.get_register(15));
+        assert_eq!(rf.get_mode(), OperatingMode::SYSTEM);
 
-        assert_eq!(rf.write_cpsr(OperatingMode::SUPERVISOR.value()), Ok(()));
+        assert_eq!(rf.write_cpsr(OperatingMode::SUPERVISOR as u32), Ok(()));
         assert_eq!(0x0a, rf.get_register(0));
         assert_eq!(0, rf.get_register(14));
+        assert_eq!(rf.get_mode(), OperatingMode::SUPERVISOR);
 
-        // Makes the test panic due to non valid mode.
         assert_eq!(rf.write_cpsr(0), Err(()));
+        assert_eq!(
+            rf.write_cpsr(0xa0000000 | OperatingMode::USER as u32),
+            Ok(())
+        );
+        assert_eq!(rf.is_flag_set(&ConditionCodeFlag::N), true);
+        assert_eq!(rf.is_flag_set(&ConditionCodeFlag::Z), false);
+        assert_eq!(rf.is_flag_set(&ConditionCodeFlag::C), true);
+        assert_eq!(rf.is_flag_set(&ConditionCodeFlag::V), false);
+
+        assert_eq!(rf.get_mode(), OperatingMode::USER);
     }
 }
