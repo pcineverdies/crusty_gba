@@ -74,7 +74,7 @@ impl RegisterFile {
             abt_bank: vec![0; 2],
             irq_bank: vec![0; 2],
             und_bank: vec![0; 2],
-            cpsr: 0,
+            cpsr: 0x00000010,
             spsr: vec![0; 5],
             current_mode: OperatingMode::SYSTEM,
         }
@@ -171,6 +171,58 @@ impl RegisterFile {
         Ok(())
     }
 
+    /// RegisterFile::write_V
+    ///
+    /// Modify the the V flag
+    ///
+    /// @param V [bool]: true if V is to be set, false otherwise
+    pub fn write_V(&mut self, V: bool) {
+        if V {
+            self.cpsr = self.cpsr.set_bit(28);
+        } else {
+            self.cpsr = self.cpsr.clear_bit(28);
+        }
+    }
+
+    /// RegisterFile::write_N
+    ///
+    /// Modify the the N flag
+    ///
+    /// @param N [bool]: true if N is to be set, false otherwise
+    pub fn write_N(&mut self, N: bool) {
+        if N {
+            self.cpsr = self.cpsr.set_bit(31);
+        } else {
+            self.cpsr = self.cpsr.clear_bit(31);
+        }
+    }
+
+    /// RegisterFile::write_C
+    ///
+    /// Modify the the C flag
+    ///
+    /// @param C [bool]: true if C is to be set, false otherwise
+    pub fn write_C(&mut self, C: bool) {
+        if C {
+            self.cpsr = self.cpsr.set_bit(29);
+        } else {
+            self.cpsr = self.cpsr.clear_bit(29);
+        }
+    }
+
+    /// RegisterFile::write_Z
+    ///
+    /// Modify the the Z flag
+    ///
+    /// @param Z [bool]: true if Z is to be set, false otherwise
+    pub fn write_Z(&mut self, Z: bool) {
+        if Z {
+            self.cpsr = self.cpsr.set_bit(30);
+        } else {
+            self.cpsr = self.cpsr.clear_bit(30);
+        }
+    }
+
     /// RegisterFile::get_spsr
     ///
     /// Read spsr register, using the correct value depending on the
@@ -250,6 +302,31 @@ impl RegisterFile {
         }
     }
 
+    pub fn check_condition_code(&self, code: u32) -> bool {
+        use ConditionCodeFlag::*;
+        match code.get_range(3, 0) {
+            0b0000 => self.is_flag_set(&Z),
+            0b0001 => !self.is_flag_set(&Z),
+            0b0010 => self.is_flag_set(&C),
+            0b0011 => !self.is_flag_set(&C),
+            0b0100 => self.is_flag_set(&N),
+            0b0101 => !self.is_flag_set(&N),
+            0b0110 => self.is_flag_set(&V),
+            0b0111 => !self.is_flag_set(&V),
+            0b1000 => self.is_flag_set(&C) && !self.is_flag_set(&Z),
+            0b1001 => !self.is_flag_set(&C) && self.is_flag_set(&Z),
+            0b1010 => self.is_flag_set(&N) == self.is_flag_set(&V),
+            0b1011 => self.is_flag_set(&N) != self.is_flag_set(&V),
+            0b1100 => !self.is_flag_set(&Z) && (self.is_flag_set(&N) == self.is_flag_set(&V)),
+            0b1101 => self.is_flag_set(&Z) && (self.is_flag_set(&N) != self.is_flag_set(&V)),
+            0b1110 => true,
+            0b1111 => true,
+            _ => {
+                panic!("Provide condition code is not valid")
+            }
+        }
+    }
+
     /// RegisterFile::get_mode
     ///
     /// Return the curent operating mode, based on the content of cpsr
@@ -323,5 +400,22 @@ mod test_register_file {
         assert_eq!(rf.is_flag_set(&ConditionCodeFlag::V), false);
 
         assert_eq!(rf.get_mode(), OperatingMode::USER);
+    }
+
+    #[test]
+    fn test_condition_code() {
+        let mut rf = RegisterFile::new();
+
+        // Z = 1
+        let _ = rf.write_cpsr(0x40000010);
+
+        //LS
+        assert_eq!(true, rf.check_condition_code(0b1001));
+        // EQ
+        assert_eq!(true, rf.check_condition_code(0b0000));
+        // VS
+        assert_eq!(false, rf.check_condition_code(0b0110));
+        // always
+        assert_eq!(true, rf.check_condition_code(0b1110));
     }
 }
