@@ -43,6 +43,7 @@ pub struct MemoryRequest {
 /// bus::MemoryResponse
 ///
 /// structure to represent a response from the bus to a memory request
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub struct MemoryResponse {
     pub data: u32,
     pub n_wait: BusSignal,

@@ -67,8 +67,10 @@ impl RegisterFile {
     /// Create the empty register file, with all the registers set to 0.
     /// This behaviour might not be the definitive one.
     pub fn new() -> Self {
+        let mut registers = vec![0; 16];
+        registers[15] = 0x07fffff8;
         Self {
-            registers: vec![0; 16],
+            registers: registers,
             fiq_bank: vec![0; 7],
             svc_bank: vec![0; 2],
             abt_bank: vec![0; 2],
