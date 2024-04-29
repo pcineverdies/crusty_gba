@@ -24,6 +24,94 @@ pub enum ArmInstructionType {
     Unimplemented,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[repr(u32)]
+pub enum ArmAluOpcode {
+    AND = 0,
+    EOR = 1,
+    SUB = 2,
+    RSB = 3,
+    ADD = 4,
+    ADC = 5,
+    SBC = 6,
+    RSC = 7,
+    TST = 8,
+    TEQ = 9,
+    CMP = 10,
+    CMN = 11,
+    ORR = 12,
+    MOV = 13,
+    BIC = 14,
+    MNV = 15,
+}
+
+impl ArmAluOpcode {
+    pub fn is_test_opcode(opcode: ArmAluOpcode) -> bool {
+        if opcode as u32 >= 8 && opcode as u32 <= 11 {
+            return true;
+        }
+        false
+    }
+
+    pub fn is_logical(opcode: ArmAluOpcode) -> bool {
+        if opcode as u32 <= 1
+            || (opcode as u32 >= 8 && opcode as u32 <= 9)
+            || (opcode as u32 >= 0xc)
+        {
+            return true;
+        }
+        false
+    }
+
+    pub fn is_arithmetic(opcode: ArmAluOpcode) -> bool {
+        !ArmAluOpcode::is_logical(opcode)
+    }
+
+    pub fn from_value(opcode: u32) -> ArmAluOpcode {
+        if opcode == 0 {
+            return ArmAluOpcode::AND;
+        } else if opcode == 1 {
+            return ArmAluOpcode::EOR;
+        } else if opcode == 2 {
+            return ArmAluOpcode::SUB;
+        } else if opcode == 3 {
+            return ArmAluOpcode::RSB;
+        } else if opcode == 4 {
+            return ArmAluOpcode::ADD;
+        } else if opcode == 5 {
+            return ArmAluOpcode::ADC;
+        } else if opcode == 6 {
+            return ArmAluOpcode::SBC;
+        } else if opcode == 7 {
+            return ArmAluOpcode::RSC;
+        } else if opcode == 8 {
+            return ArmAluOpcode::TST;
+        } else if opcode == 9 {
+            return ArmAluOpcode::TEQ;
+        } else if opcode == 10 {
+            return ArmAluOpcode::CMP;
+        } else if opcode == 11 {
+            return ArmAluOpcode::CMN;
+        } else if opcode == 12 {
+            return ArmAluOpcode::ORR;
+        } else if opcode == 13 {
+            return ArmAluOpcode::MOV;
+        } else if opcode == 14 {
+            return ArmAluOpcode::BIC;
+        }
+        ArmAluOpcode::MNV
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[repr(u32)]
+pub enum ArmAluShiftCodes {
+    LSL = 0,
+    LSR = 1,
+    ASR = 2,
+    ROR = 3,
+}
+
 /// decode_arg
 ///
 /// Get the type of ARM instruction given its opcode. This function

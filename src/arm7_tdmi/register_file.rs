@@ -173,52 +173,52 @@ impl RegisterFile {
         Ok(())
     }
 
-    /// RegisterFile::write_V
+    /// RegisterFile::write_v
     ///
-    /// Modify the the V flag
+    /// Modify the the v flag
     ///
-    /// @param V [bool]: true if V is to be set, false otherwise
-    pub fn write_V(&mut self, V: bool) {
-        if V {
+    /// @param v [bool]: true if v is to be set, false otherwise
+    pub fn write_v(&mut self, v: bool) {
+        if v {
             self.cpsr = self.cpsr.set_bit(28);
         } else {
             self.cpsr = self.cpsr.clear_bit(28);
         }
     }
 
-    /// RegisterFile::write_N
+    /// RegisterFile::write_n
     ///
-    /// Modify the the N flag
+    /// Modify the the n flag
     ///
-    /// @param N [bool]: true if N is to be set, false otherwise
-    pub fn write_N(&mut self, N: bool) {
-        if N {
+    /// @param n [bool]: true if n is to be set, false otherwise
+    pub fn write_n(&mut self, n: bool) {
+        if n {
             self.cpsr = self.cpsr.set_bit(31);
         } else {
             self.cpsr = self.cpsr.clear_bit(31);
         }
     }
 
-    /// RegisterFile::write_C
+    /// RegisterFile::write_c
     ///
-    /// Modify the the C flag
+    /// Modify the the c flag
     ///
-    /// @param C [bool]: true if C is to be set, false otherwise
-    pub fn write_C(&mut self, C: bool) {
-        if C {
+    /// @param c [bool]: true if c is to be set, false otherwise
+    pub fn write_c(&mut self, c: bool) {
+        if c {
             self.cpsr = self.cpsr.set_bit(29);
         } else {
             self.cpsr = self.cpsr.clear_bit(29);
         }
     }
 
-    /// RegisterFile::write_Z
+    /// RegisterFile::write_z
     ///
     /// Modify the the Z flag
     ///
-    /// @param Z [bool]: true if Z is to be set, false otherwise
-    pub fn write_Z(&mut self, Z: bool) {
-        if Z {
+    /// @param z [bool]: true if z is to be set, false otherwise
+    pub fn write_z(&mut self, z: bool) {
+        if z {
             self.cpsr = self.cpsr.set_bit(30);
         } else {
             self.cpsr = self.cpsr.clear_bit(30);
