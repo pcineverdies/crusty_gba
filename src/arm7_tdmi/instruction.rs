@@ -1,3 +1,7 @@
+use num_traits::One;
+
+use crate::common::BitOperation;
+
 /// instruction::ArmInstructionType
 ///
 /// enum to represent the different categories of instructions
@@ -194,6 +198,85 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
     }
 
     ArmInstructionType::Unimplemented
+}
+
+pub fn barrel_shifter(
+    operand: u32,
+    shift_type: u32,
+    shift_amount: u32,
+    old_c: bool,
+) -> (u32, bool, bool) {
+    let mut there_is_shift = true;
+    let mut result = operand;
+    let mut carry = old_c;
+
+    match num::FromPrimitive::from_u32(shift_type) {
+        Some(ArmAluShiftCodes::LSL) => {
+            if shift_amount == 0 {
+                there_is_shift = false;
+            } else if shift_amount < 32 {
+                carry = operand.is_bit_set(32 - shift_amount);
+                result = operand.wrapping_shl(shift_amount);
+            } else if shift_amount == 32 {
+                carry = operand.is_bit_set(0);
+                result = 0;
+            } else {
+                carry = false;
+                result = 0;
+            }
+        }
+        Some(ArmAluShiftCodes::LSR) => {
+            if shift_amount == 0 {
+                carry = operand.is_bit_set(31);
+                result = 0;
+            } else if shift_amount < 32 {
+                carry = operand.is_bit_set(shift_amount - 1);
+                result = operand.wrapping_shr(shift_amount);
+            } else if shift_amount == 32 {
+                carry = operand.is_bit_set(31);
+                result = 0;
+            } else {
+                carry = false;
+                result = 0;
+            }
+        }
+        Some(ArmAluShiftCodes::ASR) => {
+            if shift_amount == 0 {
+                carry = operand.is_bit_set(31);
+                result = if carry { 0xFFFFFFFF } else { 0 };
+            } else if shift_amount < 32 {
+                carry = operand.is_bit_set(shift_amount - 1);
+                result = (operand as i32).wrapping_shr(shift_amount) as u32;
+            } else {
+                carry = operand.is_bit_set(31);
+                result = if carry { 0xFFFFFFFF } else { 0 };
+            }
+        }
+        Some(ArmAluShiftCodes::ROR) => {
+            if shift_amount == 0 {
+                carry = operand.is_bit_set(0);
+                result = operand.rotate_right(1);
+                if old_c {
+                    result.set_bit(31);
+                } else {
+                    result.clear_bit(31);
+                }
+            } else {
+                let shift_amount = shift_amount % 32;
+                if shift_amount == 0 {
+                    carry = operand.is_bit_set(31);
+                } else {
+                    carry = operand.is_bit_set(shift_amount - 1);
+                    result = operand.rotate_right(shift_amount);
+                }
+            }
+        }
+        None => {
+            panic!("Invalid shift type!");
+        }
+    }
+
+    return (result, carry, there_is_shift);
 }
 
 #[cfg(test)]

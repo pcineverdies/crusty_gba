@@ -239,7 +239,7 @@ impl RegisterFile {
             mode if mode == OperatingMode::ABORT as u32 => self.spsr[2],
             mode if mode == OperatingMode::IRQ as u32 => self.spsr[3],
             mode if mode == OperatingMode::UND as u32 => self.spsr[4],
-            _ => 0,
+            _ => panic!("Cannot read spsr in current mode"),
         }
     }
 
