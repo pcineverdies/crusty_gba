@@ -272,7 +272,7 @@ pub fn barrel_shifter(
             }
         }
         None => {
-            panic!("Invalid shift type!");
+            panic!("Invalid shift type");
         }
     }
 

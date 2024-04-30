@@ -78,11 +78,11 @@ impl ARM7TDMI {
         // of the memory, then the data will be overridden, otherwise it will be used to access the
         // memory.
         let mut next_request = MemoryRequest {
-            address: self.rf.get_register(15) + 8, // Implements only arm mode
-            nr_w: BusSignal::LOW,                  // Read operation
-            mas: TransferSize::WORD,               // Reads 32 bits
-            n_opc: BusSignal::LOW,                 // Requires an opcode
-            n_trans:                               // Whether we are priviliged
+            address: self.rf.get_register(15).wrapping_add(8),  // Implements only arm mode
+            nr_w: BusSignal::LOW,                               // Read operation
+            mas: TransferSize::WORD,                            // Reads 32 bits
+            n_opc: BusSignal::LOW,                              // Requires an opcode
+            n_trans:                                            // Whether we are priviliged
                 if self.rf.get_mode() == OperatingMode::USER {
                     BusSignal::LOW
                 } else {
@@ -106,19 +106,21 @@ impl ARM7TDMI {
         self.data_is_fetch = true;
 
         match decode_arm(self.arm_current_execute) {
-            ArmInstructionType::DataProcessing => self.arm_data_processing(&mut next_request, rsp),
+            ArmInstructionType::DataProcessing => self.arm_data_processing(&mut next_request),
+            ArmInstructionType::BranchAndExchange => {
+                self.arm_branch_and_exchange(&mut next_request)
+            }
+            ArmInstructionType::SingleDataTransfer => {
+                self.arm_single_data_transfer(&mut next_request, &rsp)
+            }
+            ArmInstructionType::Branch => self.arm_branch(&mut next_request),
+            ArmInstructionType::HwTrasferReg => todo!(),
+            ArmInstructionType::HwTransferImmediate => todo!(),
+            ArmInstructionType::Undefined => todo!(),
+            ArmInstructionType::BlockDataTransfer => todo!(),
             ArmInstructionType::Multiply => todo!(),
             ArmInstructionType::MultiplyLong => todo!(),
             ArmInstructionType::SingleDataSwap => todo!(),
-            ArmInstructionType::BranchAndExchange => {
-                self.arm_branch_and_exchange(&mut next_request, rsp)
-            }
-            ArmInstructionType::HwTrasferReg => todo!(),
-            ArmInstructionType::HwTransferImmediate => todo!(),
-            ArmInstructionType::SingleDataTransfer => todo!(),
-            ArmInstructionType::Undefined => todo!(),
-            ArmInstructionType::BlockDataTransfer => todo!(),
-            ArmInstructionType::Branch => self.arm_branch(&mut next_request, rsp),
             ArmInstructionType::CoprocessorDataTransfer => todo!(),
             ArmInstructionType::CoprocessorDataOperation => todo!(),
             ArmInstructionType::CoprocessorRegisterTransfer => todo!(),
@@ -130,13 +132,14 @@ impl ARM7TDMI {
         // front of the queue and updating the program counter
         if self.instruction_step == InstructionStep::STEP0 {
             self.arm_current_execute = self.arm_instruction_queue.pop_front().unwrap();
-            self.rf.write_register(15, self.rf.get_register(15) + 4);
+            self.rf
+                .write_register(15, self.rf.get_register(15).wrapping_add(4));
         }
 
         next_request
     }
 
-    fn arm_data_processing(&mut self, req: &mut MemoryRequest, rsp: MemoryResponse) {
+    fn arm_data_processing(&mut self, req: &mut MemoryRequest) {
         let rd = self.arm_current_execute.get_range(15, 12);
 
         if self.instruction_step == InstructionStep::STEP0 {
@@ -165,7 +168,9 @@ impl ARM7TDMI {
             }
 
             if i_flag == 1 {
-                operand1 += if rn == 15 { 8 } else { 0 };
+                if rn == 15 {
+                    operand1 = operand1.wrapping_add(8)
+                }
                 operand2 = nn.rotate_right(is * 2);
             } else {
                 there_is_shift = true;
@@ -175,11 +180,19 @@ impl ARM7TDMI {
                         panic!("Cannot use r15 as rs register in ALU operations");
                     }
                     shift_amount = self.rf.get_register(rs).get_range(7, 0);
-                    operand1 += if rn == 15 { 12 } else { 0 };
-                    operand2 += if rm == 15 { 12 } else { 0 };
+                    if rn == 15 {
+                        operand1 = operand1.wrapping_add(12)
+                    }
+                    if rm == 15 {
+                        operand2 = operand2.wrapping_add(12)
+                    }
                 } else {
-                    operand1 += if rn == 15 { 8 } else { 0 };
-                    operand2 += if rm == 15 { 8 } else { 0 };
+                    if rn == 15 {
+                        operand1 = operand1.wrapping_add(8)
+                    }
+                    if rm == 15 {
+                        operand2 = operand2.wrapping_add(8)
+                    }
                 }
 
                 (operand2, carry_shifter, there_is_shift) = barrel_shifter(
@@ -222,8 +235,9 @@ impl ARM7TDMI {
             req.address = self.rf.get_register(15);
             self.instruction_step = InstructionStep::STEP3;
         } else if self.instruction_step == InstructionStep::STEP3 {
-            req.address = self.rf.get_register(15) + 4;
-            self.rf.write_register(15, self.rf.get_register(15) - 4);
+            req.address = self.rf.get_register(15).wrapping_add(4);
+            self.rf
+                .write_register(15, self.rf.get_register(15).wrapping_sub(4));
             self.instruction_step = InstructionStep::STEP0;
         } else {
             panic!("Wrong step for instructin type ARM_DATA_PROCESSING");
@@ -336,11 +350,9 @@ impl ARM7TDMI {
             let res = self.rf.write_cpsr(current_spsr);
             assert_ne!(res, Err(()));
         }
-
-        println!("Flags after exuction of {:?}: V = {:?}; N = {:?}", opcode, v_output, alu_result.is_bit_set(31));
     }
 
-    fn arm_branch_and_exchange(&mut self, req: &mut MemoryRequest, rsp: MemoryResponse) {
+    fn arm_branch_and_exchange(&mut self, req: &mut MemoryRequest) {
         let condition = self.arm_current_execute.get_range(31, 28);
         let opcode = self.arm_current_execute.get_range(7, 4);
         let rn = self.arm_current_execute.get_range(3, 0);
@@ -358,7 +370,7 @@ impl ARM7TDMI {
         }
     }
 
-    fn arm_branch(&mut self, req: &mut MemoryRequest, rsp: MemoryResponse) {
+    fn arm_branch(&mut self, req: &mut MemoryRequest) {
         let condition = self.arm_current_execute.get_range(31, 28);
         let opcode = self.arm_current_execute.get_range(24, 24);
         let mut nn = self.arm_current_execute.get_range(23, 0);
@@ -377,19 +389,86 @@ impl ARM7TDMI {
             self.data_is_fetch = false;
             self.instruction_step = InstructionStep::STEP1;
             if opcode == 1 {
-                self.rf.write_register(14, current_pc + 4);
+                self.rf.write_register(14, current_pc.wrapping_add(4));
             }
 
             self.rf
                 .write_register(15, (current_pc as i32 + 4 + offset) as u32);
         } else if self.instruction_step == InstructionStep::STEP1 {
-            req.address = current_pc + 4;
+            req.address = current_pc.wrapping_add(4);
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
-            req.address = current_pc + 8;
+            req.address = current_pc.wrapping_add(8);
             self.instruction_step = InstructionStep::STEP0;
         } else {
             panic!("Wrong step for instructin type ARM_BRANCH_AND_EXCHANGE");
+        }
+    }
+
+    fn arm_single_data_transfer(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+        let i_flag = self.arm_current_execute.get_range(25, 25);
+        let p_flag = self.arm_current_execute.get_range(24, 24);
+        let u_flag = self.arm_current_execute.get_range(23, 23);
+        let b_flag = self.arm_current_execute.get_range(22, 22);
+        let tw_flag = self.arm_current_execute.get_range(21, 21);
+        let l_flag = self.arm_current_execute.get_range(20, 20);
+        let rn = self.arm_current_execute.get_range(19, 16);
+        let rd = self.arm_current_execute.get_range(15, 12);
+        let rm = self.arm_current_execute.get_range(3, 0);
+        let mut offset = 0;
+        let mut address_to_mem = 0;
+
+        // Common between load and store
+        if self.instruction_step == InstructionStep::STEP0 {
+            let immediate = self.arm_current_execute.get_range(11, 0);
+            let shift_amount = self.arm_current_execute.get_range(11, 7);
+            let shift_type = self.arm_current_execute.get_range(6, 5);
+
+            address_to_mem = self.rf.get_register(rn);
+
+            if !self.rf.check_condition_code(condition) {
+                return;
+            }
+
+            if i_flag == 1 {
+                offset = immediate;
+            } else {
+                if rm == 15 {
+                    panic!("Cannot use r15 as shift register in ARM_SINGLE_DATA_TRANSFER");
+                }
+                (offset, _, _) = barrel_shifter(
+                    self.rf.get_register(rm),
+                    shift_type,
+                    shift_amount,
+                    self.rf.is_flag_set(&ConditionCodeFlag::C),
+                );
+            }
+
+            if p_flag == 1 {
+                if u_flag == 1 {
+                    address_to_mem = address_to_mem.wrapping_add(offset);
+                } else {
+                    address_to_mem = address_to_mem.wrapping_sub(offset);
+                }
+            }
+        }
+
+        if l_flag == 0 {
+            if self.instruction_step == InstructionStep::STEP0 {
+            } else if self.instruction_step == InstructionStep::STEP1 {
+            } else if self.instruction_step == InstructionStep::STEP2 {
+            } else if self.instruction_step == InstructionStep::STEP3 {
+            } else if self.instruction_step == InstructionStep::STEP4 {
+            } else {
+                panic!("Wrong step for instructin type ARM_LOAD");
+            }
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+            } else if self.instruction_step == InstructionStep::STEP1 {
+            } else {
+                panic!("Wrong step for instructin type ARM_STORE");
+            }
         }
     }
 }
