@@ -48,17 +48,19 @@ pub enum ConditionCodeFlag {
     V,
 }
 
+/// register_file::RegisterFile
+///
+/// structure to define the register file and all its parameters
 #[derive(Debug, PartialEq, Eq)]
 pub struct RegisterFile {
-    registers: Vec<u32>,
-    fiq_bank: Vec<u32>,
-    svc_bank: Vec<u32>,
-    abt_bank: Vec<u32>,
-    irq_bank: Vec<u32>,
-    und_bank: Vec<u32>,
-    cpsr: u32,
-    spsr: Vec<u32>,
-    current_mode: OperatingMode,
+    registers: Vec<u32>, // registers to use in user mode
+    fiq_bank: Vec<u32>,  // register  bank for fiq mode
+    svc_bank: Vec<u32>,  // register  bank for svc mode
+    abt_bank: Vec<u32>,  // register  bank for abt mode
+    irq_bank: Vec<u32>,  // register  bank for irq mode
+    und_bank: Vec<u32>,  // register  bank for und mode
+    cpsr: u32,           // current cpsr
+    spsr: Vec<u32>,      // spsr bank
 }
 
 impl RegisterFile {
@@ -68,9 +70,12 @@ impl RegisterFile {
     /// This behaviour might not be the definitive one.
     pub fn new() -> Self {
         let mut registers = vec![0; 16];
+
+        // r15 gets this value so that the first instruction to be fetched is at
+        // the expected address
         registers[15] = 0x07fffff8;
         Self {
-            registers: registers,
+            registers,
             fiq_bank: vec![0; 7],
             svc_bank: vec![0; 2],
             abt_bank: vec![0; 2],
@@ -78,14 +83,13 @@ impl RegisterFile {
             und_bank: vec![0; 2],
             cpsr: 0x00000010,
             spsr: vec![0; 5],
-            current_mode: OperatingMode::SYSTEM,
         }
     }
 
     /// RegisterFile::get_register
     ///
-    /// Get one of the 16 general purpose registers, using the correct
-    /// bank depending on the working mode.
+    /// Get one of the 16 general purpose registers, using the correct bank depending on the
+    /// current working mode.
     ///
     /// @param index [u32]: which of the registers to use
     /// @return [u32]: register
@@ -94,13 +98,10 @@ impl RegisterFile {
         let mode = self.cpsr.get_range(4, 0);
         match index {
             0..=7 => self.registers[index],
-            8..=12 => {
-                if self.current_mode == OperatingMode::FIQ {
-                    self.fiq_bank[index - 8]
-                } else {
-                    self.registers[index]
-                }
-            }
+            8..=12 => match mode {
+                mode if mode == OperatingMode::FIQ as u32 => self.fiq_bank[index - 8],
+                _ => self.registers[index],
+            },
             13..=14 => match mode {
                 mode if mode == OperatingMode::SYSTEM as u32 => self.registers[index],
                 mode if mode == OperatingMode::USER as u32 => self.registers[index],
@@ -118,8 +119,8 @@ impl RegisterFile {
 
     /// RegisterFile::write_register
     ///
-    /// Write one of the 16 general purpose registers, using the correct
-    /// bank depending on the working mode.
+    /// Write one of the 16 general purpose registers, using the correct bank depending on the
+    /// current working mode.
     ///
     /// @param index [u32]: which of the registers to use
     /// @param value [u32]: new content of the register
@@ -128,13 +129,10 @@ impl RegisterFile {
         let index = index as usize;
         match index {
             0..=7 => self.registers[index] = value,
-            8..=12 => {
-                if self.current_mode == OperatingMode::FIQ {
-                    self.fiq_bank[index - 8] = value
-                } else {
-                    self.registers[index] = value
-                }
-            }
+            8..=12 => match mode {
+                mode if mode == OperatingMode::FIQ as u32 => self.fiq_bank[index - 8] = value,
+                _ => self.registers[index] = value,
+            },
             13..=14 => match mode {
                 mode if mode == OperatingMode::FIQ as u32 => self.fiq_bank[index - 8] = value,
                 mode if mode == OperatingMode::SUPERVISOR as u32 => {
@@ -266,8 +264,7 @@ impl RegisterFile {
 
     /// RegisterFile::write_spsr
     ///
-    /// Modify the value of spsr register, using the correct bank depending on the
-    /// working mode
+    /// Modify the value of spsr register, using the correct bank depending on the working mode.
     ///
     /// @param value [u32]: value to use
     /// @return [Result<(), ()>]: Err if the operating mode is not correct, Ok otherwise
@@ -304,6 +301,13 @@ impl RegisterFile {
         }
     }
 
+    /// RegisterFile::check_condition_code
+    ///
+    /// Given the condition code of an instruction, check whether the condition is true or false
+    /// using the flags in cspr.
+    ///
+    /// @param code [u32]: condition code to use, must be in range 0..15
+    /// @return [bool]: true if the condition is verified, false otherwise
     pub fn check_condition_code(&self, code: u32) -> bool {
         use ConditionCodeFlag::*;
         match code.get_range(3, 0) {
@@ -322,7 +326,7 @@ impl RegisterFile {
             0b1100 => !self.is_flag_set(&Z) && (self.is_flag_set(&N) == self.is_flag_set(&V)),
             0b1101 => self.is_flag_set(&Z) && (self.is_flag_set(&N) != self.is_flag_set(&V)),
             0b1110 => true,
-            0b1111 => true,
+            0b1111 => true, // Undefined behaviour
             _ => {
                 panic!("Provide condition code is not valid")
             }
@@ -359,49 +363,82 @@ mod test_register_file {
     fn test_registers() {
         let mut rf = RegisterFile::new();
 
+        // Should be able to enter user mode
         assert_eq!(rf.write_cpsr(OperatingMode::USER as u32), Ok(()));
+
+        // r0 should get 0x0a as value
         rf.write_register(0, 0x0a);
         assert_eq!(0x0a, rf.get_register(0));
 
+        // r14 should get 0x7ac0 as value
         rf.write_register(14, 0x7ac0);
         assert_eq!(0x7ac0, rf.get_register(14));
 
+        // r14 should get 0x1001 as value
         rf.write_register(15, 0x1001);
         assert_eq!(0x1001, rf.get_register(15));
 
+        // Should be able to enter IRQ mode
         assert_eq!(rf.write_cpsr(OperatingMode::IRQ as u32), Ok(()));
+
+        // Should be able to write spsr (since now we are in privileged mode)
         assert_eq!(rf.write_spsr(OperatingMode::SYSTEM as u32), Ok(()));
+
+        // r0 is always the same for all the modes
         assert_eq!(0x0a, rf.get_register(0));
+
+        // r14 is not the same as before, so it does not have the same value
         assert_eq!(0x0, rf.get_register(14));
+
+        // Check the previous writing on spsr
         assert_eq!(OperatingMode::SYSTEM as u32, rf.get_spsr());
+
+        // Check the current mode
         assert_eq!(rf.get_mode(), OperatingMode::IRQ);
 
+        // r14 is now modified
         rf.write_register(14, 0xbe11);
         assert_eq!(0xbe11, rf.get_register(14));
+
+        // r15 is alawys the same
         assert_eq!(0x1001, rf.get_register(15));
 
+        // Enter system mode
         assert_eq!(rf.write_cpsr(OperatingMode::SYSTEM as u32), Ok(()));
+
+        // r0 is always the same for all the modes
         assert_eq!(0x0a, rf.get_register(0));
+
+        // SYSTEM and USER share the same registers
         assert_eq!(0x7ac0, rf.get_register(14));
         assert_eq!(0x1001, rf.get_register(15));
         assert_eq!(rf.get_mode(), OperatingMode::SYSTEM);
 
+        // Enter supervisor mode
         assert_eq!(rf.write_cpsr(OperatingMode::SUPERVISOR as u32), Ok(()));
-        assert_eq!(0x0a, rf.get_register(0));
-        assert_eq!(0, rf.get_register(14));
         assert_eq!(rf.get_mode(), OperatingMode::SUPERVISOR);
 
+        // r0 is always the same for all the modes
+        assert_eq!(0x0a, rf.get_register(0));
+
+        // r14 is different for each mode
+        assert_eq!(0, rf.get_register(14));
+
+        // Cannot write an invalid mode into cpsr
         assert_eq!(rf.write_cpsr(0), Err(()));
+
+        // Enter user mode and set flags N and C
         assert_eq!(
             rf.write_cpsr(0xa0000000 | OperatingMode::USER as u32),
             Ok(())
         );
+        assert_eq!(rf.get_mode(), OperatingMode::USER);
+
+        // Only N and C are set
         assert_eq!(rf.is_flag_set(&ConditionCodeFlag::N), true);
         assert_eq!(rf.is_flag_set(&ConditionCodeFlag::Z), false);
         assert_eq!(rf.is_flag_set(&ConditionCodeFlag::C), true);
         assert_eq!(rf.is_flag_set(&ConditionCodeFlag::V), false);
-
-        assert_eq!(rf.get_mode(), OperatingMode::USER);
     }
 
     #[test]

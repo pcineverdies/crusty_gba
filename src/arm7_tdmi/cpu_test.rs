@@ -125,7 +125,9 @@ fn load_store_test() {
     for _ in 0..30 {
         let req = cpu.step(response);
         if req.nr_w == BusSignal::LOW {
-            response.data = *instructions.get(&(req.address & 0xFFFFFFFC)).unwrap_or(&NOP);
+            response.data = *instructions
+                .get(&(req.address & 0xFFFFFFFC))
+                .unwrap_or(&NOP);
         } else {
             instructions.insert(req.address, req.data);
         }
@@ -135,4 +137,3 @@ fn load_store_test() {
     assert_eq!(*instructions.get(&0).unwrap_or(&0), 0x20);
     assert_eq!(cpu.rf.get_register(10), 0xcc);
 }
-

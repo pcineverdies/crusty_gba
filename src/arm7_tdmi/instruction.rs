@@ -1,13 +1,10 @@
-use num_traits::One;
-
 use crate::common::BitOperation;
 
 /// instruction::ArmInstructionType
 ///
-/// enum to represent the different categories of instructions
-/// which have to be handled while in ARM mode. Using these
-/// categories, multiple instructions can be grouped together,
-/// taking into account their similar behaviour
+/// enum to represent the different categories of instructions which have to be handled while in
+/// ARM mode. Using these categories, multiple instructions can be grouped together, taking into
+/// account their similar behaviours.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ArmInstructionType {
     DataProcessing,
@@ -28,6 +25,9 @@ pub enum ArmInstructionType {
     Unimplemented,
 }
 
+/// instruction::ArmAluOpcode
+///
+/// enum to represent the opcodes of ALU instructions in ARM mode
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 #[repr(u32)]
 pub enum ArmAluOpcode {
@@ -50,6 +50,13 @@ pub enum ArmAluOpcode {
 }
 
 impl ArmAluOpcode {
+    /// ArmAluOpcode::is_test_opcode
+    ///
+    /// Some alu operations do not write back the result into the destination register, but they
+    /// only update the flags.
+    ///
+    /// @param opcode [ArmAluOpcode]: opcode to check
+    /// @return [bool]: true if the opcode is a test one
     pub fn is_test_opcode(opcode: ArmAluOpcode) -> bool {
         if opcode as u32 >= 8 && opcode as u32 <= 11 {
             return true;
@@ -57,6 +64,13 @@ impl ArmAluOpcode {
         false
     }
 
+    /// ArmAluOpcode::is_logical
+    ///
+    /// Some alu operations are said to be "logical", not involving a sum or a subtraction. This
+    /// characteristic affects the way flags are updated.
+    ///
+    /// @param opcode [ArmAluOpcode]: opcode to check
+    /// @return [bool]: true if the opcode is a logical one
     pub fn is_logical(opcode: ArmAluOpcode) -> bool {
         if opcode as u32 <= 1
             || (opcode as u32 >= 8 && opcode as u32 <= 9)
@@ -67,10 +81,23 @@ impl ArmAluOpcode {
         false
     }
 
+    /// ArmAluOpcode::is_arithmetic
+    ///
+    /// Some alu operations are said to be "arithmetic", involving a sum or a subtraction. This
+    /// characteristic affects the way flags are updated.
+    ///
+    /// @param opcode [ArmAluOpcode]: opcode to check
+    /// @return [bool]: true if the opcode is a logical one
     pub fn is_arithmetic(opcode: ArmAluOpcode) -> bool {
         !ArmAluOpcode::is_logical(opcode)
     }
 
+    /// ArmAluOpcode::from_value
+    ///
+    /// return an instance of ArmAluOpcode given an opcode value.
+    ///
+    /// @param opcode [u32]: opcode to use
+    /// @return [ArmAluOpcode]: associated opcode
     pub fn from_value(opcode: u32) -> ArmAluOpcode {
         if opcode == 0 {
             return ArmAluOpcode::AND;
@@ -107,6 +134,9 @@ impl ArmAluOpcode {
     }
 }
 
+// instruction::ArmAluShiftCodes
+//
+// enum representing the different kinds of shift operations you might apply to operands.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 #[repr(u32)]
 pub enum ArmAluShiftCodes {
@@ -116,11 +146,10 @@ pub enum ArmAluShiftCodes {
     ROR = 3,
 }
 
-/// decode_arg
+/// instruction::decode_arg
 ///
-/// Get the type of ARM instruction given its opcode. This function
-/// has been implemented thanks to [this](https://www.gregorygaines.com/blog/decoding-the-arm7tdmi-instruction-set-game-boy-advance/)
-/// article by Gregory Gaines.
+/// Get the type of ARM instruction given its opcode. This function has been implemented thanks to
+/// [this](https://www.gregorygaines.com/blog/decoding-the-arm7tdmi-instruction-set-game-boy-advance/) article by Gregory Gaines.
 ///
 /// @param data [u32]: instruction to decode
 /// @return [ArmInstructionType]: type of the instruction
@@ -200,59 +229,89 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
     ArmInstructionType::Unimplemented
 }
 
+/// instruction::barrel_shifter
+///
+/// Performs a a shift operation using the internal barrel shift of arm, taking into account all
+/// the weird corner cases.
+///
+/// @param operand [u32]: opearand to shift
+/// @param shift_type [u32]: what kind of shift to use (must be in range 0..3)
+/// @param shift_amound [u32]: how much to shift
+/// @param old_c [bool]: current value of the c_flag
+/// @return [u32]: shifted operand
+/// @return [bool]: in case of a logical alu operation, this tells whether the carry flag should be
+/// set or not.
+/// @return [bool]: depending on the operands, the shift operation might not be done. This affects
+/// the timing of the current instruction
 pub fn barrel_shifter(
     operand: u32,
     shift_type: u32,
     shift_amount: u32,
     old_c: bool,
 ) -> (u32, bool, bool) {
+    // Results to use
     let mut there_is_shift = true;
     let mut result = operand;
     let mut carry = old_c;
 
     match num::FromPrimitive::from_u32(shift_type) {
+        // Logical shift left
         Some(ArmAluShiftCodes::LSL) => {
+            // If shift amount is 0, no shift is done
             if shift_amount == 0 {
                 there_is_shift = false;
+
+            // Normal shift
             } else if shift_amount < 32 {
                 carry = operand.is_bit_set(32 - shift_amount);
                 result = operand.wrapping_shl(shift_amount);
+
+            // Result is 0, carry is the lsb of the operand
             } else if shift_amount == 32 {
                 carry = operand.is_bit_set(0);
                 result = 0;
+
+            // In case the shift_amount is too large, result is 0, carry is false
             } else {
                 carry = false;
                 result = 0;
             }
         }
+
+        // Logical shift right
         Some(ArmAluShiftCodes::LSR) => {
-            if shift_amount == 0 {
+            // equivalent 0 and 32: result is 0, carry is the msb
+            if shift_amount == 0 || shift_amount == 32 {
                 carry = operand.is_bit_set(31);
                 result = 0;
+
+            // Normal shift operation
             } else if shift_amount < 32 {
                 carry = operand.is_bit_set(shift_amount - 1);
                 result = operand.wrapping_shr(shift_amount);
-            } else if shift_amount == 32 {
-                carry = operand.is_bit_set(31);
-                result = 0;
+
+            // In case the shift_amount is too large, result is 0, carry is false
             } else {
                 carry = false;
                 result = 0;
             }
         }
+
+        // Arithmetic shift right (shifted bits are filled with msb of operand)
         Some(ArmAluShiftCodes::ASR) => {
-            if shift_amount == 0 {
+            // Case of shift_amount 0 or >= 31: result is related to the msb, which is also the
+            // carry
+            if shift_amount == 0 || shift_amount >= 32 {
                 carry = operand.is_bit_set(31);
                 result = if carry { 0xFFFFFFFF } else { 0 };
-            } else if shift_amount < 32 {
+            } else {
                 carry = operand.is_bit_set(shift_amount - 1);
                 result = (operand as i32).wrapping_shr(shift_amount) as u32;
-            } else {
-                carry = operand.is_bit_set(31);
-                result = if carry { 0xFFFFFFFF } else { 0 };
             }
         }
         Some(ArmAluShiftCodes::ROR) => {
+            // Special ROR operation (RORX), in which the rotation is by 1 and the shifted bit is
+            // the old carry of the system.
             if shift_amount == 0 {
                 carry = operand.is_bit_set(0);
                 result = operand.rotate_right(1);
@@ -261,6 +320,8 @@ pub fn barrel_shifter(
                 } else {
                     result.clear_bit(31);
                 }
+
+            // Only the 5 msbs of shift_amount are used in this case
             } else {
                 let shift_amount = shift_amount % 32;
                 if shift_amount == 0 {

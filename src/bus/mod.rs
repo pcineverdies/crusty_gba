@@ -1,3 +1,6 @@
+/// bus::TransferSize
+///
+/// enum to represent the size of the current transfer (BYTE = 8, HALFWORD = 16, WORD = 32).
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 #[repr(u8)]
 pub enum TransferSize {
@@ -7,6 +10,10 @@ pub enum TransferSize {
     WORD = 2,
 }
 
+/// bus::BusCycle
+///
+/// enum to represent the value of the type of bus cycle for the next operation (which is sent
+/// together with the current request)
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 #[repr(u8)]
 pub enum BusCycle {
@@ -17,6 +24,9 @@ pub enum BusCycle {
     COPROCESSOR = 3,
 }
 
+/// bus::BusSignal
+///
+/// enum to represent the value of a one-bit bus signal
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 #[repr(u8)]
 pub enum BusSignal {
