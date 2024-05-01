@@ -16,6 +16,7 @@ pub enum TransferSize {
 /// together with the current request)
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 #[repr(u8)]
+#[allow(dead_code)] // COPROCESSOR is not used
 pub enum BusCycle {
     #[default]
     NONSEQUENTIAL = 0,

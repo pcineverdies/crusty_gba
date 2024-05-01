@@ -1,3 +1,5 @@
+use crate::arm7_tdmi::register_file::ConditionCodeFlag;
+use crate::arm7_tdmi::ARM7TDMI;
 use crate::common::BitOperation;
 
 /// instruction::ArmInstructionType
@@ -6,14 +8,14 @@ use crate::common::BitOperation;
 /// ARM mode. Using these categories, multiple instructions can be grouped together, taking into
 /// account their similar behaviours.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[allow(dead_code)] // coprocessor instructions are not used
 pub enum ArmInstructionType {
     DataProcessing,
     Multiply,
     MultiplyLong,
     SingleDataSwap,
     BranchAndExchange,
-    HwTrasferReg,
-    HwTransferImmediate,
+    HwTransfer,
     SingleDataTransfer,
     Undefined,
     BlockDataTransfer,
@@ -208,16 +210,10 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
         return ArmInstructionType::MultiplyLong;
     }
 
-    let halfword_data_transfer_register_format = 0b0000_0000_0000_0000_0000_0000_1001_0000;
-    let format_mask = 0b0000_1110_0100_0000_0000_1111_1001_0000;
-    if (data & format_mask) == halfword_data_transfer_register_format {
-        return ArmInstructionType::HwTrasferReg;
-    }
-
-    let halfword_data_transfer_immediate_format = 0b0000_0000_0100_0000_0000_0000_1001_0000;
-    let format_mask = 0b0000_1110_0100_0000_0000_0000_1001_0000;
-    if (data & format_mask) == halfword_data_transfer_immediate_format {
-        return ArmInstructionType::HwTransferImmediate;
+    let halfword_data_transfer_format = 0b0000_0000_0000_0000_0000_0000_1001_0000;
+    let format_mask = 0b0000_1110_0000_0000_0000_0000_1001_0000;
+    if (data & format_mask) == halfword_data_transfer_format {
+        return ArmInstructionType::HwTransfer;
     }
 
     let data_processing_format = 0b0000_0000_0000_0000_0000_0000_0000_0000;
@@ -340,6 +336,151 @@ pub fn barrel_shifter(
     return (result, carry, there_is_shift);
 }
 
+impl ARM7TDMI {
+    /// arm7_tdmi::alu
+    ///
+    /// Implement the arm alu for arithmetic instructions, by both computing the correct result and generating the two expected
+    /// flags, carry and overflow.
+    ///
+    /// @param operand1 [u32]: first input of the alu
+    /// @param operand2 [u32]: second input of the alu
+    /// @param opcode [ArmAluOpcode]: opcode to use
+    /// @return [u32]: result
+    /// @return [u32]: value of the arithmetic carry flag
+    /// @return [u32]: value of the arithemtic overflow flag
+    pub fn alu(&self, operand1: u32, operand2: u32, opcode: ArmAluOpcode) -> (u32, bool, bool) {
+        use ArmAluOpcode::*;
+        use ConditionCodeFlag::*;
+
+        let (alu_result, v_output, c_output);
+        let (op1, op2, c_in);
+
+        if opcode == SUB || opcode == CMP {
+            op1 = (operand1 as i32) as i64;
+            op2 = (operand2 as i32) as i64;
+            alu_result = op1 - op2;
+            v_output =
+                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+        } else if opcode == RSB {
+            op1 = (operand2 as i32) as i64;
+            op2 = (operand1 as i32) as i64;
+            alu_result = op1 - op2;
+            v_output =
+                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+        } else if opcode == ADD || opcode == CMN {
+            op1 = (operand2 as i32) as i64;
+            op2 = (operand1 as i32) as i64;
+            alu_result = op1 + op2;
+            v_output =
+                (op1 >= 0 && op2 >= 0 && alu_result < 0) || (op1 < 0 && op2 < 0 && alu_result >= 0);
+        } else if opcode == ADC {
+            op1 = (operand2 as i32) as i64;
+            op2 = (operand1 as i32) as i64;
+            c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
+            alu_result = op1 + op2 + c_in;
+            v_output =
+                (op1 >= 0 && op2 >= 0 && alu_result < 0) || (op1 < 0 && op2 < 0 && alu_result >= 0);
+        } else if opcode == SBC {
+            op1 = (operand2 as i32) as i64;
+            op2 = (operand1 as i32) as i64;
+            c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
+            alu_result = op1 - op2 + c_in - 1;
+            v_output =
+                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+        } else if opcode == RSC {
+            op1 = (operand2 as i32) as i64;
+            op2 = (operand1 as i32) as i64;
+            c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
+            alu_result = op2 - op1 + c_in - 1;
+            v_output =
+                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+        } else {
+            panic!("Wrong argument `opcode` for alu")
+        }
+
+        c_output = (alu_result as u64).is_bit_set(32);
+
+        let alu_result = (alu_result as u64).get_range(31, 0) as u32;
+        return (alu_result, c_output, v_output);
+    }
+
+    /// arm7_tdmi::alu_operation
+    ///
+    /// Implement the arm alu both for logical and arithmetic instructions. Arithemtic instructions
+    /// rely on `arm7_tdmi::alu` to be exectued.
+    ///
+    /// @param operand1 [u32]: first input of the alu
+    /// @param operand2 [u32]: second input of the alu
+    /// @param opcode [ArmAluOpcode]: opcode to use
+    /// @return [u32]: result
+    /// @return [u32]: value of the arithmetic carry flag
+    /// @return [u32]: value of the arithemtic overflow flag
+    pub fn alu_operation(
+        &self,
+        operand1: u32,
+        operand2: u32,
+        opcode: ArmAluOpcode,
+    ) -> (u32, bool, bool) {
+        use ArmAluOpcode::*;
+        match opcode {
+            AND => (operand1 & operand2, false, false),
+            EOR => (operand1 ^ operand2, false, false),
+            SUB => self.alu(operand1, operand2, opcode),
+            RSB => self.alu(operand1, operand2, opcode),
+            ADD => self.alu(operand1, operand2, opcode),
+            ADC => self.alu(operand1, operand2, opcode),
+            SBC => self.alu(operand1, operand2, opcode),
+            RSC => self.alu(operand1, operand2, opcode),
+            TST => (operand1 & operand2, false, false),
+            TEQ => (operand1 ^ operand2, false, false),
+            CMP => self.alu(operand1, operand2, opcode),
+            CMN => self.alu(operand1, operand2, opcode),
+            ORR => (operand1 | operand2, false, false),
+            MOV => (operand2, false, false),
+            BIC => (operand1 & !operand2, false, false),
+            MNV => (!operand2, false, false),
+        }
+    }
+
+    /// arm7_tdmi::update_flags
+    ///
+    /// Update the flags of the cpu depending on the instruction executed
+    ///
+    /// @param alu_result [u32]: result of the alu
+    /// @param opcode [ArmAluOpcode]: kind of executed instruction
+    /// @param rd [u32]: destination register
+    /// @param carry_output [bool]: carry to use for arithmetic instructions
+    /// @param carry_shifter [bool]: carry to use for logical instructions
+    /// @param v_output [bool]: overflow to use for arithmetic instructions
+    pub fn update_flags(
+        &mut self,
+        alu_result: u32,
+        opcode: ArmAluOpcode,
+        rd: u32,
+        carry_output: bool,
+        carry_shifter: bool,
+        v_output: bool,
+    ) {
+        // if the destination register is not r15, just update the flags in the normal way
+        if rd != 15 {
+            self.rf.write_z(alu_result == 0);
+            self.rf.write_n(alu_result.is_bit_set(31));
+            if ArmAluOpcode::is_logical(opcode) {
+                self.rf.write_c(carry_shifter);
+            } else if ArmAluOpcode::is_arithmetic(opcode) {
+                self.rf.write_c(carry_output);
+                self.rf.write_v(v_output);
+            }
+
+        // otherwise, the instruction is a sort of return: move the current spsr into the cpsr
+        } else {
+            let current_spsr = self.rf.get_spsr();
+            let res = self.rf.write_cpsr(current_spsr);
+            assert_ne!(res, Err(()));
+        }
+    }
+}
+
 #[cfg(test)]
 mod test_instructions {
 
@@ -371,11 +512,13 @@ mod test_instructions {
             decode_arm(0xe5d83003),
             ArmInstructionType::SingleDataTransfer
         );
-        // ldrh r3, [r8, #3]
-        assert_eq!(
-            decode_arm(0xe1d830b3),
-            ArmInstructionType::HwTransferImmediate
-        );
+
+        // ldrh r3, [r0, #0xc1]
+        assert_eq!(decode_arm(0xe1d0acb1), ArmInstructionType::HwTransfer);
+
+        // ldrh r3, <same address>
+        assert_eq!(decode_arm(0xe15fa0b8), ArmInstructionType::HwTransfer);
+
         // undefined
         assert_eq!(decode_arm(0xf7ffffff), ArmInstructionType::Undefined);
         // ldmia r0, {r5 - r8}

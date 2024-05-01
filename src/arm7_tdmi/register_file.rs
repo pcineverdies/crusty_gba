@@ -92,8 +92,9 @@ impl RegisterFile {
     /// current working mode.
     ///
     /// @param index [u32]: which of the registers to use
+    /// @param pc_increment [u32]: how much to increment the program counter if it is required
     /// @return [u32]: register
-    pub fn get_register(&self, index: u32) -> u32 {
+    pub fn get_register(&self, index: u32, pc_increment: u32) -> u32 {
         let index = index as usize;
         let mode = self.cpsr.get_range(4, 0);
         match index {
@@ -112,7 +113,7 @@ impl RegisterFile {
                 mode if mode == OperatingMode::UND as u32 => self.und_bank[index - 13],
                 _ => panic!("Illegal mode {:#05b} in cpsr", mode),
             },
-            15 => self.registers[15],
+            15 => self.registers[15].wrapping_add(pc_increment),
             _ => panic!("Wrong index used in `get_register`: {}", index),
         }
     }
@@ -368,15 +369,15 @@ mod test_register_file {
 
         // r0 should get 0x0a as value
         rf.write_register(0, 0x0a);
-        assert_eq!(0x0a, rf.get_register(0));
+        assert_eq!(0x0a, rf.get_register(0, 0));
 
         // r14 should get 0x7ac0 as value
         rf.write_register(14, 0x7ac0);
-        assert_eq!(0x7ac0, rf.get_register(14));
+        assert_eq!(0x7ac0, rf.get_register(14, 0));
 
         // r14 should get 0x1001 as value
         rf.write_register(15, 0x1001);
-        assert_eq!(0x1001, rf.get_register(15));
+        assert_eq!(0x1001, rf.get_register(15, 0));
 
         // Should be able to enter IRQ mode
         assert_eq!(rf.write_cpsr(OperatingMode::IRQ as u32), Ok(()));
@@ -385,10 +386,10 @@ mod test_register_file {
         assert_eq!(rf.write_spsr(OperatingMode::SYSTEM as u32), Ok(()));
 
         // r0 is always the same for all the modes
-        assert_eq!(0x0a, rf.get_register(0));
+        assert_eq!(0x0a, rf.get_register(0, 0));
 
         // r14 is not the same as before, so it does not have the same value
-        assert_eq!(0x0, rf.get_register(14));
+        assert_eq!(0x0, rf.get_register(14, 0));
 
         // Check the previous writing on spsr
         assert_eq!(OperatingMode::SYSTEM as u32, rf.get_spsr());
@@ -398,20 +399,20 @@ mod test_register_file {
 
         // r14 is now modified
         rf.write_register(14, 0xbe11);
-        assert_eq!(0xbe11, rf.get_register(14));
+        assert_eq!(0xbe11, rf.get_register(14, 0));
 
         // r15 is alawys the same
-        assert_eq!(0x1001, rf.get_register(15));
+        assert_eq!(0x1001, rf.get_register(15, 0));
 
         // Enter system mode
         assert_eq!(rf.write_cpsr(OperatingMode::SYSTEM as u32), Ok(()));
 
         // r0 is always the same for all the modes
-        assert_eq!(0x0a, rf.get_register(0));
+        assert_eq!(0x0a, rf.get_register(0, 0));
 
         // SYSTEM and USER share the same registers
-        assert_eq!(0x7ac0, rf.get_register(14));
-        assert_eq!(0x1001, rf.get_register(15));
+        assert_eq!(0x7ac0, rf.get_register(14, 0));
+        assert_eq!(0x1001, rf.get_register(15, 0));
         assert_eq!(rf.get_mode(), OperatingMode::SYSTEM);
 
         // Enter supervisor mode
@@ -419,10 +420,10 @@ mod test_register_file {
         assert_eq!(rf.get_mode(), OperatingMode::SUPERVISOR);
 
         // r0 is always the same for all the modes
-        assert_eq!(0x0a, rf.get_register(0));
+        assert_eq!(0x0a, rf.get_register(0, 0));
 
         // r14 is different for each mode
-        assert_eq!(0, rf.get_register(14));
+        assert_eq!(0, rf.get_register(14, 0));
 
         // Cannot write an invalid mode into cpsr
         assert_eq!(rf.write_cpsr(0), Err(()));
