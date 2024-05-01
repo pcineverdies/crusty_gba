@@ -3,7 +3,7 @@ mod instruction;
 mod register_file;
 
 use crate::arm7_tdmi::instruction::{
-    decode_arm, ArmAluOpcode, ArmAluShiftCodes, ArmInstructionType,
+    decode_arm, ArmAluOpcode, ArmInstructionType,
 };
 use crate::arm7_tdmi::register_file::{ConditionCodeFlag, RegisterFile};
 use crate::bus::{BusCycle, BusSignal, MemoryRequest, MemoryResponse, TransferSize};
@@ -52,6 +52,7 @@ pub struct ARM7TDMI {
     instruction_step: InstructionStep,
     data_is_fetch: bool,
     data_is_reading: bool,
+    last_used_address: u32,
 }
 
 impl ARM7TDMI {
@@ -64,6 +65,7 @@ impl ARM7TDMI {
             data_is_fetch: true,
             data_is_reading: true,
             instruction_step: InstructionStep::STEP0,
+            last_used_address: 0,
         }
     }
 
@@ -82,6 +84,7 @@ impl ARM7TDMI {
             nr_w: BusSignal::LOW,                               // Read operation
             mas: TransferSize::WORD,                            // Reads 32 bits
             n_opc: BusSignal::LOW,                              // Requires an opcode
+            data: 0,
             n_trans:                                            // Whether we are priviliged
                 if self.rf.get_mode() == OperatingMode::USER {
                     BusSignal::LOW
@@ -407,31 +410,32 @@ impl ARM7TDMI {
 
     fn arm_single_data_transfer(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let condition = self.arm_current_execute.get_range(31, 28);
-        let i_flag = self.arm_current_execute.get_range(25, 25);
-        let p_flag = self.arm_current_execute.get_range(24, 24);
-        let u_flag = self.arm_current_execute.get_range(23, 23);
-        let b_flag = self.arm_current_execute.get_range(22, 22);
-        let tw_flag = self.arm_current_execute.get_range(21, 21);
         let l_flag = self.arm_current_execute.get_range(20, 20);
         let rn = self.arm_current_execute.get_range(19, 16);
         let rd = self.arm_current_execute.get_range(15, 12);
-        let rm = self.arm_current_execute.get_range(3, 0);
+        let p_flag = self.arm_current_execute.get_range(24, 24);
+        let tw_flag = self.arm_current_execute.get_range(21, 21);
+        let b_flag = self.arm_current_execute.get_range(22, 22);
+
         let mut offset = 0;
         let mut address_to_mem = 0;
 
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
         // Common between load and store
-        if self.instruction_step == InstructionStep::STEP0 {
+        if self.instruction_step == InstructionStep::STEP1 {
+            let i_flag = self.arm_current_execute.get_range(25, 25);
+            let u_flag = self.arm_current_execute.get_range(23, 23);
             let immediate = self.arm_current_execute.get_range(11, 0);
             let shift_amount = self.arm_current_execute.get_range(11, 7);
             let shift_type = self.arm_current_execute.get_range(6, 5);
+            let rm = self.arm_current_execute.get_range(3, 0);
 
             address_to_mem = self.rf.get_register(rn);
 
-            if !self.rf.check_condition_code(condition) {
-                return;
-            }
-
-            if i_flag == 1 {
+            if i_flag == 0 {
                 offset = immediate;
             } else {
                 if rm == 15 {
@@ -447,25 +451,77 @@ impl ARM7TDMI {
 
             if p_flag == 1 {
                 if u_flag == 1 {
-                    address_to_mem = address_to_mem.wrapping_add(offset);
+                    req.address = address_to_mem.wrapping_add(offset);
                 } else {
-                    address_to_mem = address_to_mem.wrapping_sub(offset);
+                    req.address = address_to_mem.wrapping_sub(offset);
                 }
+            } else {
+                if tw_flag == 1 {
+                    req.n_trans = BusSignal::LOW;
+                }
+            }
+
+            if b_flag == 1 {
+                req.mas = TransferSize::BYTE;
             }
         }
 
-        if l_flag == 0 {
+        if l_flag == 1 {
             if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
             } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP2;
+                req.bus_cycle = BusCycle::INTERNAL;
+                self.last_used_address = req.address;
+                if p_flag == 0 || tw_flag == 1 {
+                    self.rf.write_register(rn, address_to_mem);
+                }
             } else if self.instruction_step == InstructionStep::STEP2 {
+                let mut data_to_write = rsp.data;
+                let mut offset = self.last_used_address % 4;
+
+                if b_flag == 1 {
+                    data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
+                } else {
+                    data_to_write = data_to_write.rotate_right(offset * 8);
+                }
+                self.rf.write_register(rd, data_to_write);
+                self.data_is_fetch = false;
+                if rd == 15 {
+                    self.arm_instruction_queue.clear();
+                    req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                    self.instruction_step = InstructionStep::STEP3;
+                } else {
+                    req.bus_cycle = BusCycle::SEQUENTIAL;
+                    self.instruction_step = InstructionStep::STEP0;
+                }
             } else if self.instruction_step == InstructionStep::STEP3 {
+                req.address = self.rf.get_register(15);
+                self.instruction_step = InstructionStep::STEP4;
+            } else if self.instruction_step == InstructionStep::STEP4 {
+                req.address = self.rf.get_register(15).wrapping_add(4);
+                self.rf
+                    .write_register(15, self.rf.get_register(15).wrapping_sub(4));
+                self.instruction_step = InstructionStep::STEP0;
             } else if self.instruction_step == InstructionStep::STEP4 {
             } else {
                 panic!("Wrong step for instructin type ARM_LOAD");
             }
         } else {
             if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
             } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_reading = false;
+                req.data = self.rf.get_register(rd);
+                if b_flag == 1 {
+                    let byte = req.data & 0xff;
+                    req.data = byte | (byte << 8) | (byte << 16) | (byte << 24);
+                }
+                req.nr_w = BusSignal::HIGH;
+                self.instruction_step = InstructionStep::STEP0;
             } else {
                 panic!("Wrong step for instructin type ARM_STORE");
             }

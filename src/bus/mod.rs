@@ -31,6 +31,7 @@ pub enum BusSignal {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub struct MemoryRequest {
     pub address: u32,
+    pub data: u32,
     pub nr_w: BusSignal,
     pub mas: TransferSize,
     pub n_opc: BusSignal,
