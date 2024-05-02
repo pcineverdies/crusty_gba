@@ -50,7 +50,6 @@ pub struct ARM7TDMI {
     arm_current_execute: u32,             // Current executed instruction (arm)
     instruction_step: InstructionStep,    // Current instructions stpe for FSM handling
     data_is_fetch: bool,                  // Is next data a fetch?
-    data_is_reading: bool,                // Is next data a reading?
     last_used_address: u32,               // Store the last address sent on the bus
 }
 
@@ -64,7 +63,6 @@ impl ARM7TDMI {
             arm_instruction_queue: VecDeque::from([]),
             arm_current_execute: NOP,
             data_is_fetch: true,
-            data_is_reading: true,
             instruction_step: InstructionStep::STEP0,
             last_used_address: 0,
         }
@@ -103,11 +101,10 @@ impl ARM7TDMI {
         }
 
         // A fetch was in progress: add the data to the instruction queue
-        if self.data_is_reading && self.data_is_fetch {
+        if self.data_is_fetch {
             self.arm_instruction_queue.push_back(rsp.data);
         }
 
-        self.data_is_reading = true;
         self.data_is_fetch = true;
 
         // In case of arm mode, decode the current executed function

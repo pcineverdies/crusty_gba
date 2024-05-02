@@ -340,7 +340,6 @@ impl ARM7TDMI {
                 req.bus_cycle = BusCycle::NONSEQUENTIAL;
                 self.instruction_step = InstructionStep::STEP1;
             } else if self.instruction_step == InstructionStep::STEP1 {
-                self.data_is_reading = false;
                 req.data = self.rf.get_register(rd, 12);
 
                 // If only one byte is to be moved, copy the byte over all the 32 lines of the bus
@@ -485,7 +484,6 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP1;
                 } else if self.instruction_step == InstructionStep::STEP1 {
-                    self.data_is_reading = false;
                     req.data = self.rf.get_register(rd, 12);
                     req.data = (req.data & 0xffff) | (req.data << 16);
                     req.nr_w = BusSignal::HIGH;
@@ -528,12 +526,10 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP1;
                 } else if self.instruction_step == InstructionStep::STEP1 {
-                    self.data_is_reading = false;
                     req.data = self.rf.get_register(rd, 0);
                     req.nr_w = BusSignal::HIGH;
                     self.instruction_step = InstructionStep::STEP2;
                 } else if self.instruction_step == InstructionStep::STEP2 {
-                    self.data_is_reading = false;
                     req.address = self.last_used_address + 4;
                     req.data = self.rf.get_register(rd + 1, 0);
                     req.nr_w = BusSignal::HIGH;
