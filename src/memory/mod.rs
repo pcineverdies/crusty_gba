@@ -1,4 +1,8 @@
 use crate::{bus::TransferSize, common::BitOperation};
+use byteorder::{LittleEndian, ReadBytesExt};
+use std::fs::File;
+use std::io::Cursor;
+use std::io::Read;
 
 pub struct Memory {
     is_read_only: bool,
@@ -10,7 +14,7 @@ pub struct Memory {
 
 impl Memory {
     pub fn new(init_address: u32, size: u32, rom: bool, name: String) -> Self {
-        let data = vec![0; size as usize];
+        let data = vec![0 as u32; (size >> 2) as usize];
 
         Self {
             is_read_only: rom,
@@ -28,7 +32,7 @@ impl Memory {
 
         // TODO: What happens for misaligned addresses?
 
-        self.data[((address & 0xfffffffc) - self.init_address) as usize]
+        self.data[((address >> 2) - self.init_address) as usize]
     }
 
     pub fn read_byte(&self, address: u32) -> u32 {
@@ -37,7 +41,7 @@ impl Memory {
         }
 
         let offset = address % 4;
-        let data_to_return = self.data[((address & 0xfffffffc) - self.init_address) as usize];
+        let data_to_return = self.data[((address >> 2) - self.init_address) as usize];
         data_to_return.get_range(offset * 8 + 7, offset * 8)
     }
 
@@ -47,7 +51,7 @@ impl Memory {
         }
 
         let offset = address.is_bit_set(1) as u32;
-        let data_to_return = self.data[((address & 0xfffffffc) - self.init_address) as usize];
+        let data_to_return = self.data[((address >> 2) - self.init_address) as usize];
         data_to_return.get_range(offset * 16 + 15, offset * 16)
     }
 
@@ -56,7 +60,7 @@ impl Memory {
             panic!("Address is to valid while accessing {}", self.name);
         }
 
-        self.data[((address & 0xfffffffc) - self.init_address) as usize]
+        self.data[((address >> 2) - self.init_address) as usize]
     }
 
     pub fn write(&mut self, address: u32, data: u32, mas: TransferSize) {
@@ -71,32 +75,49 @@ impl Memory {
         match mas {
             TransferSize::BYTE => {
                 let offset = address % 4;
-                let mut data_to_write =
-                    self.data[((address & 0xfffffffc) - self.init_address) as usize];
+                let mut data_to_write = self.data[((address >> 2) - self.init_address) as usize];
                 let mask = 0x000000ff << offset * 8;
                 data_to_write &= !mask;
                 data_to_write |= data & mask;
-                self.data[((address & 0xfffffffc) - self.init_address) as usize] = data_to_write;
+                self.data[((address >> 2) - self.init_address) as usize] = data_to_write;
             }
             TransferSize::HALFWORD => {
                 let offset = address.is_bit_set(1) as u32;
-                let mut data_to_write =
-                    self.data[((address & 0xfffffffc) - self.init_address) as usize];
+                let mut data_to_write = self.data[((address >> 2) - self.init_address) as usize];
                 let mask = 0x0000ffff << offset * 16;
                 data_to_write &= !mask;
                 data_to_write |= data & mask;
-                self.data[((address & 0xfffffffc) - self.init_address) as usize] = data_to_write;
+                self.data[((address >> 2) - self.init_address) as usize] = data_to_write;
             }
             TransferSize::WORD => {
-                self.data[((address & 0xfffffffc) - self.init_address) as usize] = data;
+                self.data[((address >> 2) - self.init_address) as usize] = data;
             }
+        }
+    }
+
+    fn init_from_file(&mut self, file_name: &String) {
+        let mut f =
+            File::open(&file_name).expect("Unable to load file while initializing {self.name}");
+        let metadata = std::fs::metadata(&file_name)
+            .expect("Unable to read metadata while initializing {self.name}");
+
+        let mut buffer: Vec<u8> = vec![0; metadata.len() as usize];
+        f.read(&mut buffer)
+            .expect("Buffer overflow while initializing {self.name}");
+
+        let mut index: u32 = 0;
+        while (index as usize) < buffer.len() {
+            let mut rdr = Cursor::new(&buffer[(index as usize)..(index.wrapping_add(4) as usize)]);
+            let data = rdr.read_u32::<LittleEndian>().unwrap();
+            self.data[(index >> 2) as usize] = data;
+            index += 4;
         }
     }
 }
 
 #[test]
 fn test_memory() {
-    let mut memory = Memory::new(0, 0x1000, false, String::from("test memory"));
+    let mut memory = Memory::new(0, 0x100000, false, String::from("test memory"));
 
     assert_eq!(memory.read(0, TransferSize::WORD), 0);
     memory.write(0, 0xaabbccdd, TransferSize::WORD);
