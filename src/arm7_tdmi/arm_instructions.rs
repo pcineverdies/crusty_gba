@@ -158,7 +158,7 @@ impl ARM7TDMI {
         let condition = self.arm_current_execute.get_range(31, 28);
         let opcode = self.arm_current_execute.get_range(24, 24);
         let mut nn = self.arm_current_execute.get_range(23, 0);
-        let current_pc = self.rf.get_register(15, 4);
+        let current_pc = self.rf.get_register(15, 0);
 
         if !self.rf.check_condition_code(condition) {
             return;
@@ -183,7 +183,7 @@ impl ARM7TDMI {
             // Increment only by 4 due to the automatic increase of the pc at the end of the
             // instruction
             self.rf
-                .write_register(15, (current_pc as i32 + offset) as u32);
+                .write_register(15, (current_pc as i32 + offset + 8) as u32);
 
         // Refill the pipeline in the next two steps
         } else if self.instruction_step == InstructionStep::STEP1 {
@@ -191,6 +191,8 @@ impl ARM7TDMI {
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
             req.address = current_pc.wrapping_add(4);
+            self.rf
+                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
             self.instruction_step = InstructionStep::STEP0;
         } else {
             panic!("Wrong step for instructin type ARM_BRANCH_AND_EXCHANGE");
@@ -348,6 +350,7 @@ impl ARM7TDMI {
                     req.data = byte | (byte << 8) | (byte << 16) | (byte << 24);
                 }
                 req.nr_w = BusSignal::HIGH;
+                self.data_is_fetch = false;
                 self.instruction_step = InstructionStep::STEP0;
             } else {
                 panic!("Wrong step for instructin type ARM_STORE");
@@ -488,6 +491,7 @@ impl ARM7TDMI {
                     req.data = (req.data & 0xffff) | (req.data << 16);
                     req.nr_w = BusSignal::HIGH;
                     self.instruction_step = InstructionStep::STEP0;
+                    self.data_is_fetch = false;
                 } else {
                     panic!("Wrong step for instructin type ARM_STRH");
                 }
@@ -529,11 +533,13 @@ impl ARM7TDMI {
                     req.data = self.rf.get_register(rd, 0);
                     req.nr_w = BusSignal::HIGH;
                     self.instruction_step = InstructionStep::STEP2;
+                    self.data_is_fetch = false;
                 } else if self.instruction_step == InstructionStep::STEP2 {
                     req.address = self.last_used_address + 4;
                     req.data = self.rf.get_register(rd + 1, 0);
                     req.nr_w = BusSignal::HIGH;
                     self.instruction_step = InstructionStep::STEP0;
+                    self.data_is_fetch = false;
                 } else {
                     panic!("Wrong step for instructin type ARM_STRD");
                 }

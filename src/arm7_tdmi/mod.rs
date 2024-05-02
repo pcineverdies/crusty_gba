@@ -9,7 +9,7 @@ use crate::bus::{BusCycle, BusSignal, MemoryRequest, MemoryResponse, TransferSiz
 use std::collections::VecDeque;
 
 /// Definition of a NOP instruction used to initialize the CPU
-const NOP: u32 = 0xE1A00000_u32;
+pub const NOP: u32 = 0xE1A00000_u32;
 
 /// arm7_tdmi::InstructionStep
 ///

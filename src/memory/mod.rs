@@ -32,7 +32,7 @@ impl Memory {
 
         // TODO: What happens for misaligned addresses?
 
-        self.data[((address >> 2) - self.init_address) as usize]
+        self.data[((address - self.init_address) >> 2) as usize]
     }
 
     pub fn read_byte(&self, address: u32) -> u32 {
@@ -41,7 +41,7 @@ impl Memory {
         }
 
         let offset = address % 4;
-        let data_to_return = self.data[((address >> 2) - self.init_address) as usize];
+        let data_to_return = self.data[((address - self.init_address) >> 2) as usize];
         data_to_return.get_range(offset * 8 + 7, offset * 8)
     }
 
@@ -51,7 +51,7 @@ impl Memory {
         }
 
         let offset = address.is_bit_set(1) as u32;
-        let data_to_return = self.data[((address >> 2) - self.init_address) as usize];
+        let data_to_return = self.data[((address - self.init_address) >> 2) as usize];
         data_to_return.get_range(offset * 16 + 15, offset * 16)
     }
 
@@ -60,7 +60,7 @@ impl Memory {
             panic!("Address is to valid while accessing {}", self.name);
         }
 
-        self.data[((address >> 2) - self.init_address) as usize]
+        self.data[((address - self.init_address) >> 2) as usize]
     }
 
     pub fn write(&mut self, address: u32, data: u32, mas: TransferSize) {
@@ -79,7 +79,7 @@ impl Memory {
                 let mask = 0x000000ff << offset * 8;
                 data_to_write &= !mask;
                 data_to_write |= data & mask;
-                self.data[((address >> 2) - self.init_address) as usize] = data_to_write;
+                self.data[((address - self.init_address) >> 2) as usize] = data_to_write;
             }
             TransferSize::HALFWORD => {
                 let offset = address.is_bit_set(1) as u32;
@@ -87,15 +87,15 @@ impl Memory {
                 let mask = 0x0000ffff << offset * 16;
                 data_to_write &= !mask;
                 data_to_write |= data & mask;
-                self.data[((address >> 2) - self.init_address) as usize] = data_to_write;
+                self.data[((address - self.init_address) >> 2) as usize] = data_to_write;
             }
             TransferSize::WORD => {
-                self.data[((address >> 2) - self.init_address) as usize] = data;
+                self.data[((address - self.init_address) >> 2) as usize] = data;
             }
         }
     }
 
-    fn init_from_file(&mut self, file_name: &String) {
+    pub fn init_from_file(&mut self, file_name: &String) {
         let mut f =
             File::open(&file_name).expect("Unable to load file while initializing {self.name}");
         let metadata = std::fs::metadata(&file_name)

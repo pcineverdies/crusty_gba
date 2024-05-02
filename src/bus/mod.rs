@@ -1,3 +1,6 @@
+use crate::arm7_tdmi;
+use crate::memory;
+
 /// bus::TransferSize
 ///
 /// enum to represent the size of the current transfer (BYTE = 8, HALFWORD = 16, WORD = 32).
@@ -59,4 +62,51 @@ pub struct MemoryRequest {
 pub struct MemoryResponse {
     pub data: u32,
     pub n_wait: BusSignal,
+}
+
+pub struct Bus {
+    cpu: arm7_tdmi::ARM7TDMI,
+    pub gamepak: memory::Memory,
+    next_cpu_response: MemoryResponse,
+    next_transaction: BusCycle,
+}
+
+impl Bus {
+    pub fn new() -> Self {
+        Self {
+            cpu: arm7_tdmi::ARM7TDMI::new(),
+            gamepak: memory::Memory::new(0x08000000, 0x06000000, true, String::from("GAMEPAK")),
+            next_cpu_response: MemoryResponse {
+                data: arm7_tdmi::NOP,
+                n_wait: BusSignal::HIGH,
+            },
+            next_transaction: BusCycle::SEQUENTIAL,
+        }
+    }
+
+    pub fn step(&mut self) {
+        let cpu_request = self.cpu.step(self.next_cpu_response);
+
+        if self.next_transaction != BusCycle::INTERNAL {
+            if cpu_request.nr_w == BusSignal::LOW {
+                self.next_cpu_response = self.read(cpu_request);
+            }
+        }
+        self.next_transaction = cpu_request.bus_cycle;
+    }
+
+    fn read(&mut self, req: MemoryRequest) -> MemoryResponse {
+        let mut rsp = MemoryResponse {
+            data: 0,
+            n_wait: BusSignal::HIGH,
+        };
+
+        if req.address >= 0x08000000 && req.address <= 0x0dffffff {
+            rsp.data = self.gamepak.read(req.address, req.mas)
+        } else {
+            rsp.data = 0;
+        }
+
+        return rsp;
+    }
 }
