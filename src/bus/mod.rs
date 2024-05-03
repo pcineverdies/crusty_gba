@@ -111,8 +111,14 @@ impl Bus {
             rsp.data = self.gamepak.read(req.address, req.mas)
         } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
             rsp.data = self.gpu.read(req.address, req.mas);
-        } else if req.address == 0x04000000 {
+        } else if req.address >= 0x05000000 && req.address <= 0x05000400 {
             rsp.data = self.gpu.read(req.address, req.mas);
+        } else if req.address >= 0x07000000 && req.address <= 0x07000400 {
+            rsp.data = self.gpu.read(req.address, req.mas);
+        } else if req.address >= 0x04000000 && req.address <= 0x0400000e {
+            rsp.data = self.gpu.read(req.address, req.mas);
+        } else {
+            todo!("reading from {:#08x}", req.address);
         }
 
         return rsp;
@@ -128,8 +134,14 @@ impl Bus {
             self.gamepak.write(req.address, req.data, req.mas)
         } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
             self.gpu.write(req.address, req.data, req.mas);
-        } else if req.address == 0x04000000 {
+        } else if req.address >= 0x05000000 && req.address <= 0x05000400 {
             self.gpu.write(req.address, req.data, req.mas);
+        } else if req.address >= 0x07000000 && req.address <= 0x07000400 {
+            self.gpu.write(req.address, req.data, req.mas);
+        } else if req.address >= 0x04000000 && req.address <= 0x0400000e {
+            self.gpu.write(req.address, req.data, req.mas);
+        } else {
+            todo!("writing to {:#08x}", req.address);
         }
 
         return rsp;

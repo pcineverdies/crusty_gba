@@ -1,5 +1,6 @@
 use crate::{bus::TransferSize, common::BitOperation};
 use byteorder::{LittleEndian, ReadBytesExt};
+use num::Integer;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Read;
@@ -101,7 +102,7 @@ impl Memory {
         let metadata = std::fs::metadata(&file_name)
             .expect("Unable to read metadata while initializing {self.name}");
 
-        let mut buffer: Vec<u8> = vec![0; metadata.len() as usize];
+        let mut buffer: Vec<u8> = vec![0; metadata.len().next_multiple_of(4) as usize];
         f.read(&mut buffer)
             .expect("Buffer overflow while initializing {self.name}");
 

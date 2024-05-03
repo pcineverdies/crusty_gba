@@ -349,6 +349,11 @@ impl ARM7TDMI {
                     let byte = req.data & 0xff;
                     req.data = byte | (byte << 8) | (byte << 16) | (byte << 24);
                 }
+
+                if p_flag == 0 || tw_flag == 1 {
+                    self.rf.write_register(rn, address_to_write);
+                }
+
                 req.nr_w = BusSignal::HIGH;
                 self.data_is_fetch = false;
                 self.instruction_step = InstructionStep::STEP0;

@@ -47,7 +47,7 @@ enum OperatingMode {
 pub struct ARM7TDMI {
     pub rf: register_file::RegisterFile,  // Register File
     arm_instruction_queue: VecDeque<u32>, // Instruction queue (arm)
-    arm_current_execute: u32,             // Current executed instruction (arm)
+    pub arm_current_execute: u32,         // Current executed instruction (arm)
     instruction_step: InstructionStep,    // Current instructions stpe for FSM handling
     data_is_fetch: bool,                  // Is next data a fetch?
     last_used_address: u32,               // Store the last address sent on the bus
