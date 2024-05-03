@@ -8,16 +8,12 @@ pub struct Gpu {
     pub vram: Memory,
     pub palette_ram: Memory,
     pub oam: Memory,
-    step_counter: u32,
+    pub gpu_registers: Memory,
+    h_counter: u32,
+    v_counter: u32,
+    dot_counter: u32,
     display: Display,
-    dispcnt: u32,
-    green_swap: u32,
-    dispstat: u32,
-    vcount: u32,
-    bg0cnt: u32,
-    bg1cnt: u32,
-    bg2cnt: u32,
-    bg3cnt: u32,
+    display_array: Vec<u8>,
 }
 
 impl Gpu {
@@ -28,43 +24,58 @@ impl Gpu {
             vram: Memory::new(0x06000000, 0x18000, false, String::from("VRAM")),
             palette_ram: Memory::new(0x05000000, 0x400, false, String::from("PALETTE RAM")),
             oam: Memory::new(0x07000000, 0x400, false, String::from("OAM")),
-            step_counter: 0,
+            gpu_registers: Memory::new(0x04000000, 0x58, false, String::from("GPU REGISTERS")),
             display,
-            dispcnt: 0,
-            green_swap: 0,
-            dispstat: 0,
-            vcount: 0,
-            bg0cnt: 0,
-            bg1cnt: 0,
-            bg2cnt: 0,
-            bg3cnt: 0,
+            h_counter: 0,
+            v_counter: 0,
+            dot_counter: 0,
+            display_array: vec![
+                0 as u8;
+                (display::GBA_SCREEN_WIDTH * display::GBA_SCREEN_HEIGHT * 4)
+                    as usize
+            ],
         }
     }
 
     pub fn step(&mut self) {
-        self.step_counter += 1;
+        self.dot_counter += 1;
 
-        if self.step_counter < 279620 {
+        if self.dot_counter != 4 {
             return;
+        } else {
+            self.dot_counter = 0;
         }
 
-        self.step_counter = 0;
+        let pixel_index = self.h_counter + self.v_counter * 240;
 
-        let mut pixel_array =
-            vec![0 as u8; (display::GBA_SCREEN_WIDTH * display::GBA_SCREEN_HEIGHT * 4) as usize];
+        if self.v_counter < 160 && self.h_counter < 240 {
+            let dispcnt = self.gpu_registers.read_halfword(0x04000000);
 
-        if self.dispcnt.get_range(2, 0) == 3 {
-            for i in (0..0x12c00).step_by(2) {
-                let pixel = self.vram.read_halfword(0x06000000_u32.wrapping_add(i));
-                let pixel_index = i >> 1;
-                pixel_array[(pixel_index * 4 + 3) as usize] = pixel.get_range(4, 0) as u8 * 8;
-                pixel_array[(pixel_index * 4 + 2) as usize] = pixel.get_range(9, 5) as u8 * 8;
-                pixel_array[(pixel_index * 4 + 1) as usize] = pixel.get_range(14, 10) as u8 * 8;
-                pixel_array[(pixel_index * 4 + 0) as usize] = 0xff;
+            if dispcnt.get_range(2, 0) == 3 {
+                let pixel = self
+                    .vram
+                    .read_halfword(0x06000000_u32.wrapping_add(pixel_index * 2));
+                self.display_array[(pixel_index * 4 + 3) as usize] =
+                    pixel.get_range(4, 0) as u8 * 8;
+                self.display_array[(pixel_index * 4 + 2) as usize] =
+                    pixel.get_range(9, 5) as u8 * 8;
+                self.display_array[(pixel_index * 4 + 1) as usize] =
+                    pixel.get_range(14, 10) as u8 * 8;
+                self.display_array[(pixel_index * 4 + 0) as usize] = 0xff;
             }
         }
-        self.display.update(&pixel_array);
 
+        self.h_counter += 1;
+
+        if self.h_counter == 240 + 68 {
+            self.h_counter = 0;
+            self.v_counter += 1;
+        }
+
+        if self.v_counter == 160 + 68 {
+            self.v_counter = 0;
+            self.display.update(&self.display_array);
+        }
     }
 
     pub fn read(&self, address: u32, mas: TransferSize) -> u32 {
@@ -74,22 +85,8 @@ impl Gpu {
             return self.palette_ram.read(address, mas);
         } else if address >= 0x07000000 && address < 0x07000400 {
             return self.oam.read(address, mas);
-        } else if address == 0x04000000 {
-            return self.dispcnt;
-        } else if address == 0x04000002 {
-            return self.green_swap;
-        } else if address == 0x04000004 {
-            return self.dispstat;
-        } else if address == 0x04000006 {
-            return self.vcount;
-        } else if address == 0x04000008 {
-            return self.bg0cnt;
-        } else if address == 0x0400000a {
-            return self.bg1cnt;
-        } else if address == 0x0400000c {
-            return self.bg2cnt;
-        } else if address == 0x0400000e {
-            return self.bg3cnt;
+        } else if address >= 0x04000000 && address < 0x04000058 {
+            return self.gpu_registers.read(address, mas);
         } else {
             todo!();
         }
@@ -102,22 +99,8 @@ impl Gpu {
             self.palette_ram.write(address, data, mas);
         } else if address >= 0x07000000 && address < 0x07000400 {
             self.oam.write(address, data, mas);
-        } else if address == 0x04000000 {
-            self.dispcnt = data.get_range(15, 0);
-        } else if address == 0x04000002 {
-            self.green_swap = data.get_range(15, 0);
-        } else if address == 0x04000004 {
-            self.dispstat = data.get_range(15, 0);
-        } else if address == 0x04000006 {
-            // vcount is read only
-        } else if address == 0x04000008 {
-            self.bg0cnt = data.get_range(15, 0);
-        } else if address == 0x0400000a {
-            self.bg1cnt = data.get_range(15, 0);
-        } else if address == 0x0400000c {
-            self.bg2cnt = data.get_range(15, 0);
-        } else if address == 0x0400000e {
-            self.bg3cnt = data.get_range(15, 0);
+        } else if address >= 0x04000000 && address < 0x04000058 {
+            self.gpu_registers.write(address, data, mas);
         } else {
             todo!();
         }

@@ -115,7 +115,7 @@ impl Bus {
             rsp.data = self.gpu.read(req.address, req.mas);
         } else if req.address >= 0x07000000 && req.address <= 0x07000400 {
             rsp.data = self.gpu.read(req.address, req.mas);
-        } else if req.address >= 0x04000000 && req.address <= 0x0400000e {
+        } else if req.address >= 0x04000000 && req.address <= 0x04000058 {
             rsp.data = self.gpu.read(req.address, req.mas);
         } else {
             todo!("reading from {:#08x}", req.address);
@@ -138,7 +138,7 @@ impl Bus {
             self.gpu.write(req.address, req.data, req.mas);
         } else if req.address >= 0x07000000 && req.address <= 0x07000400 {
             self.gpu.write(req.address, req.data, req.mas);
-        } else if req.address >= 0x04000000 && req.address <= 0x0400000e {
+        } else if req.address >= 0x04000000 && req.address <= 0x04000058 {
             self.gpu.write(req.address, req.data, req.mas);
         } else {
             todo!("writing to {:#08x}", req.address);
