@@ -487,6 +487,12 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP1;
                 } else if self.instruction_step == InstructionStep::STEP1 {
+                    // Post increment of the base register
+                    if p_flag == 0 || w_flag == 1 {
+                        self.rf.write_register(rn, address_to_write);
+                    }
+
+                    req.mas = TransferSize::HALFWORD;
                     req.data = self.rf.get_register(rd, 12);
                     req.data = (req.data & 0xffff) | (req.data << 16);
                     req.nr_w = BusSignal::HIGH;

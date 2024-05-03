@@ -45,7 +45,7 @@ enum OperatingMode {
 ///
 /// structure to represent the arm cpu
 pub struct ARM7TDMI {
-    rf: register_file::RegisterFile,      // Register File
+    pub rf: register_file::RegisterFile,  // Register File
     arm_instruction_queue: VecDeque<u32>, // Instruction queue (arm)
     arm_current_execute: u32,             // Current executed instruction (arm)
     instruction_step: InstructionStep,    // Current instructions stpe for FSM handling
@@ -78,6 +78,7 @@ impl ARM7TDMI {
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
         // memory.
+        //
         let mut next_request = MemoryRequest {
             address: self.rf.get_register(15, 8),               // Implements only arm mode
             nr_w: BusSignal::LOW,                               // Read operation
