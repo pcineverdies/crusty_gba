@@ -1,4 +1,5 @@
 use crate::arm7_tdmi;
+use crate::gpu;
 use crate::memory;
 
 /// bus::TransferSize
@@ -65,7 +66,8 @@ pub struct MemoryResponse {
 }
 
 pub struct Bus {
-    cpu: arm7_tdmi::ARM7TDMI,
+    pub cpu: arm7_tdmi::ARM7TDMI,
+    pub gpu: gpu::Gpu,
     pub gamepak: memory::Memory,
     next_cpu_response: MemoryResponse,
     next_transaction: BusCycle,
@@ -75,6 +77,7 @@ impl Bus {
     pub fn new() -> Self {
         Self {
             cpu: arm7_tdmi::ARM7TDMI::new(),
+            gpu: gpu::Gpu::new(),
             gamepak: memory::Memory::new(0x08000000, 0x06000000, true, String::from("GAMEPAK")),
             next_cpu_response: MemoryResponse {
                 data: arm7_tdmi::NOP,
@@ -86,10 +89,13 @@ impl Bus {
 
     pub fn step(&mut self) {
         let cpu_request = self.cpu.step(self.next_cpu_response);
+        self.gpu.step();
 
         if self.next_transaction != BusCycle::INTERNAL {
             if cpu_request.nr_w == BusSignal::LOW {
                 self.next_cpu_response = self.read(cpu_request);
+            } else {
+                self.next_cpu_response = self.write(cpu_request);
             }
         }
         self.next_transaction = cpu_request.bus_cycle;
@@ -103,8 +109,27 @@ impl Bus {
 
         if req.address >= 0x08000000 && req.address <= 0x0dffffff {
             rsp.data = self.gamepak.read(req.address, req.mas)
-        } else {
-            rsp.data = 0;
+        } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
+            rsp.data = self.gpu.read(req.address, req.mas);
+        } else if req.address == 0x04000000 {
+            rsp.data = self.gpu.read(req.address, req.mas);
+        }
+
+        return rsp;
+    }
+
+    fn write(&mut self, req: MemoryRequest) -> MemoryResponse {
+        let rsp = MemoryResponse {
+            data: 0,
+            n_wait: BusSignal::HIGH,
+        };
+
+        if req.address >= 0x08000000 && req.address <= 0x0dffffff {
+            self.gamepak.write(req.address, req.data, req.mas)
+        } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
+            self.gpu.write(req.address, req.data, req.mas);
+        } else if req.address == 0x04000000 {
+            self.gpu.write(req.address, req.data, req.mas);
         }
 
         return rsp;

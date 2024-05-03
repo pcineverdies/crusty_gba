@@ -6,7 +6,7 @@ use std::io::Read;
 
 pub struct Memory {
     is_read_only: bool,
-    data: Vec<u32>,
+    pub data: Vec<u32>,
     init_address: u32,
     size: u32,
     name: String,
@@ -75,7 +75,7 @@ impl Memory {
         match mas {
             TransferSize::BYTE => {
                 let offset = address % 4;
-                let mut data_to_write = self.data[((address >> 2) - self.init_address) as usize];
+                let mut data_to_write = self.data[((address - self.init_address) >> 2) as usize];
                 let mask = 0x000000ff << offset * 8;
                 data_to_write &= !mask;
                 data_to_write |= data & mask;
@@ -83,8 +83,8 @@ impl Memory {
             }
             TransferSize::HALFWORD => {
                 let offset = address.is_bit_set(1) as u32;
-                let mut data_to_write = self.data[((address >> 2) - self.init_address) as usize];
-                let mask = 0x0000ffff << offset * 16;
+                let mut data_to_write = self.data[((address - self.init_address) >> 2) as usize];
+                let mask = 0x0000ffff << (offset * 16);
                 data_to_write &= !mask;
                 data_to_write |= data & mask;
                 self.data[((address - self.init_address) >> 2) as usize] = data_to_write;
