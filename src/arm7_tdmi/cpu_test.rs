@@ -363,4 +363,36 @@ mod cpu_test {
         assert_eq!(cpu.rf.get_register(12, 0), cpu.rf.get_register(11, 0));
         assert!(cpu.rf.get_register(11, 0).get_range(31, 28) == 0xf);
     }
+
+    #[test]
+    fn swp_test() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00000004_u32, 0xaabbccdd),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xe3a0a0ff_u32),
+            (0x08000008_u32, 0xe3a00004_u32),
+            (0x0800000c_u32, 0xe100109a_u32),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..20 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(1, 0), 0xaabbccdd);
+        assert_eq!(*instructions.get(&0x4).unwrap_or(&0), 0xff);
+    }
 }

@@ -123,11 +123,13 @@ impl ARM7TDMI {
             ArmInstructionType::Undefined => self.arm_undefined(&mut next_request),
             ArmInstructionType::PsrTransferMRS => self.arm_psr_transfer_mrs(),
             ArmInstructionType::PsrTransferMSR => self.arm_psr_transfer_msr(),
-            ArmInstructionType::SingleDataSwap => todo!(),
-
+            ArmInstructionType::SingleDataSwap => {
+                self.arm_single_data_swap(&mut next_request, &rsp)
+            }
             ArmInstructionType::BlockDataTransfer => todo!(),
             ArmInstructionType::Multiply => todo!(),
             ArmInstructionType::MultiplyLong => todo!(),
+
             ArmInstructionType::Unimplemented => panic!(
                 "The instruction {} at address {} is not implemented and it should not be used",
                 self.arm_current_execute,

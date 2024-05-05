@@ -713,4 +713,75 @@ impl ARM7TDMI {
             let _ = self.rf.write_cpsr(to_modify);
         }
     }
+
+    /// arm7_tdmi::arm_single_data_swap
+    ///
+    /// Function to implement the swp instruction
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
+    pub fn arm_single_data_swap(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+        let b_flag = self.arm_current_execute.get_range(22, 22);
+        let rn = self.arm_current_execute.get_range(19, 16);
+        let rd = self.arm_current_execute.get_range(15, 12);
+        let rm = self.arm_current_execute.get_range(3, 0);
+        let offset = self.last_used_address % 4;
+
+        if rd == 15 || rm == 15 || rn == 15 {
+            panic!("Cannot use r15 in SWP instruction");
+        }
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        if self.instruction_step == InstructionStep::STEP0 {
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.instruction_step = InstructionStep::STEP1;
+        } else if self.instruction_step == InstructionStep::STEP1 {
+            self.data_is_fetch = false;
+
+            req.address = self.rf.get_register(rn, 0);
+            req.mas = if b_flag == 0 {
+                TransferSize::WORD
+            } else {
+                TransferSize::BYTE
+            };
+            req.n_opc = BusSignal::HIGH;
+            req.lock = BusSignal::HIGH;
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+
+            self.last_used_address = req.address;
+            self.instruction_step = InstructionStep::STEP2;
+        } else if self.instruction_step == InstructionStep::STEP2 {
+            self.data_is_fetch = false;
+
+            req.address = self.rf.get_register(rn, 0);
+            if b_flag == 0 {
+                self.rf.write_register(rd, rsp.data);
+                req.mas = TransferSize::WORD;
+                req.data = self.rf.get_register(rm, 0);
+            } else {
+                let mut data_to_write = rsp.data;
+                data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
+                self.rf.write_register(rd, data_to_write);
+                req.mas = TransferSize::BYTE;
+                req.data = self.rf.get_register(rm, 0).get_range(7, 0);
+                req.data = req.data | (req.data << 8) | (req.data << 16) | (req.data << 24);
+            };
+            req.nr_w = BusSignal::HIGH;
+            req.n_opc = BusSignal::HIGH;
+            req.lock = BusSignal::HIGH;
+            req.bus_cycle = BusCycle::INTERNAL;
+
+            self.instruction_step = InstructionStep::STEP3;
+        } else if self.instruction_step == InstructionStep::STEP3 {
+            self.data_is_fetch = false;
+            self.instruction_step = InstructionStep::STEP0;
+        } else {
+            panic!("Wrong instruction step for SWP");
+        }
+    }
 }
