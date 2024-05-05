@@ -3,6 +3,7 @@ mod cpu_test {
 
     use crate::arm7_tdmi::{OperatingMode, ARM7TDMI, NOP};
     use crate::bus::{BusSignal, MemoryResponse};
+    use crate::common::BitOperation;
     use std::collections::HashMap;
 
     #[test]
@@ -263,11 +264,6 @@ mod cpu_test {
 
         for _ in 0..50 {
             let req = cpu.step(response);
-            println!("Executed: {:#08x}", cpu.arm_current_execute);
-            println!("Current 15: {:#08x}", cpu.rf.get_register(15, 0));
-            println!("Current r14: {:#08x}", cpu.rf.get_register(14, 0));
-            println!("Current mode: {:?}", cpu.rf.get_mode());
-            println!("--------------");
             if req.nr_w == BusSignal::LOW {
                 response.data = *instructions
                     .get(&(req.address & 0xFFFFFFFC))
@@ -285,5 +281,86 @@ mod cpu_test {
         assert_eq!(cpu.rf.get_register(14, 0), 10);
         assert_eq!(cpu.rf.get_register(3, 0), 3);
         assert_eq!(cpu.rf.get_mode(), OperatingMode::USER);
+    }
+
+    #[test]
+    fn psr_mrs_test() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00000004_u32, NOP),
+            (0x00000008_u32, 0xe14fb000_u32),
+            (0x0000000c_u32, NOP),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xe15a000b_u32),
+            (0x08000008_u32, 0xe10fa000_u32),
+            (0x0800000c_u32, 0xe14fb000_u32),
+            (0x80000010_u32, 0xe7000010_u32),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..20 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(10, 0), cpu.rf.get_cpsr());
+    }
+
+    #[test]
+    fn psr_msr_test() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00000004_u32, NOP),
+            (0x00000008_u32, NOP),
+            (0x0000000c_u32, NOP),
+            (0x00000010_u32, NOP),
+            (0x00000014_u32, NOP),
+            (0x00000018_u32, NOP),
+            (0x0000001c_u32, NOP),
+            (0x00000020_u32, NOP),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xe15a000a_u32),
+            (0x08000008_u32, 0xe10fb000_u32),
+            (0x0800000c_u32, 0xe328f20f_u32),
+            (0x08000010_u32, 0xe10fc000_u32),
+            (0x08000014_u32, 0xe321f0f7_u32),
+            (0x08000018_u32, 0xe10fb000_u32),
+            (0x0800001c_u32, NOP),
+            (0x08000020_u32, NOP),
+            (0x08000024_u32, NOP),
+            (0x08000028_u32, NOP),
+            (0x0800002c_u32, NOP),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..20 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(12, 0), cpu.rf.get_register(11, 0));
+        assert!(cpu.rf.get_register(11, 0).get_range(31, 28) == 0xf);
     }
 }

@@ -638,4 +638,79 @@ impl ARM7TDMI {
             panic!("Wrong step for instructin type ARM_UND");
         }
     }
+
+    /// arm7_tdmi::arm_psr_transfer_mrs
+    ///
+    /// Function to handle the mrs instruction. This transfer PSR content to a register
+    pub fn arm_psr_transfer_mrs(&mut self) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+        let psr_flag = self.arm_current_execute.get_range(22, 22);
+        let rd = self.arm_current_execute.get_range(15, 12);
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        if rd == 15 {
+            panic!("Cannot specify r15 as destination address for mrs")
+        }
+
+        let source_register = if psr_flag == 0 {
+            self.rf.get_cpsr()
+        } else {
+            self.rf.get_spsr()
+        };
+
+        self.rf.write_register(rd, source_register);
+    }
+
+    /// arm7_tdmi::arm_psr_transfer_msr
+    ///
+    /// Function to handle the msr instruction. It applies some appropriate modifications either to
+    /// cpsr or spsr.
+    pub fn arm_psr_transfer_msr(&mut self) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+        let i_flag = self.arm_current_execute.get_range(25, 25);
+        let psr_flag = self.arm_current_execute.get_range(22, 22);
+        let f_flag = self.arm_current_execute.get_range(19, 19);
+        let c_flag = self.arm_current_execute.get_range(16, 16);
+        let rm = self.arm_current_execute.get_range(3, 0);
+        let shift = self.arm_current_execute.get_range(11, 8);
+        let imm = self.arm_current_execute.get_range(7, 0);
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        let source_operand = if i_flag == 0 {
+            if rm == 15 {
+                panic!("Cannot specify r15 as source register for msr")
+            }
+            self.rf.get_register(rm, 0)
+        } else {
+            imm.rotate_right(shift * 2)
+        };
+
+        let mut to_modify = if psr_flag == 1 {
+            self.rf.get_spsr()
+        } else {
+            self.rf.get_cpsr()
+        };
+
+        if c_flag == 1 && self.rf.get_mode() != OperatingMode::USER {
+            to_modify = to_modify & 0xffffff00;
+            to_modify = to_modify | (source_operand & 0x000000ff);
+        }
+
+        if f_flag == 1 {
+            to_modify = to_modify & 0x0fffffff;
+            to_modify = to_modify | (source_operand & 0xf0000000);
+        }
+
+        if psr_flag == 1 {
+            let _ = self.rf.write_spsr(to_modify);
+        } else {
+            let _ = self.rf.write_cpsr(to_modify);
+        }
+    }
 }

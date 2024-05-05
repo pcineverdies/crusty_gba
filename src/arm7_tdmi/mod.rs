@@ -93,7 +93,7 @@ impl ARM7TDMI {
                 },
             lock: BusSignal::LOW,                               // No swap opeartion
             t_bit: BusSignal::LOW,                              // arm mode
-            bus_cycle: BusCycle::SEQUENTIAL,                        // bus cycle is sequential
+            bus_cycle: BusCycle::SEQUENTIAL,                    // bus cycle is sequential
         };
 
         // Memory request is not completed, and the cpu must stall
@@ -121,10 +121,13 @@ impl ARM7TDMI {
             ArmInstructionType::HwTransfer => self.arm_hw_transfer(&mut next_request, &rsp),
             ArmInstructionType::SoftwareInterrupt => self.arm_swi(&mut next_request),
             ArmInstructionType::Undefined => self.arm_undefined(&mut next_request),
+            ArmInstructionType::PsrTransferMRS => self.arm_psr_transfer_mrs(),
+            ArmInstructionType::PsrTransferMSR => self.arm_psr_transfer_msr(),
+            ArmInstructionType::SingleDataSwap => todo!(),
+
             ArmInstructionType::BlockDataTransfer => todo!(),
             ArmInstructionType::Multiply => todo!(),
             ArmInstructionType::MultiplyLong => todo!(),
-            ArmInstructionType::SingleDataSwap => todo!(),
             ArmInstructionType::Unimplemented => panic!(
                 "The instruction {} at address {} is not implemented and it should not be used",
                 self.arm_current_execute,

@@ -25,6 +25,8 @@ pub enum ArmInstructionType {
     CoprocessorRegisterTransfer,
     SoftwareInterrupt,
     Unimplemented,
+    PsrTransferMRS,
+    PsrTransferMSR,
 }
 
 /// instruction::ArmAluOpcode
@@ -214,6 +216,18 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
     let format_mask = 0b0000_1110_0000_0000_0000_0000_1001_0000;
     if (data & format_mask) == halfword_data_transfer_format {
         return ArmInstructionType::HwTransfer;
+    }
+
+    let mrs_format = 0b0000_0001_0000_1111_0000_0000_0000_0000;
+    let format_mask = 0b0000_1111_1011_1111_0000_0000_0000_0000;
+    if (data & format_mask) == mrs_format {
+        return ArmInstructionType::PsrTransferMRS;
+    }
+
+    let msr_format = 0b0000_0001_0010_0000_1111_0000_0000_0000;
+    let format_mask = 0b0000_1101_1011_0000_1111_0000_0000_0000;
+    if (data & format_mask) == msr_format {
+        return ArmInstructionType::PsrTransferMSR;
     }
 
     let data_processing_format = 0b0000_0000_0000_0000_0000_0000_0000_0000;
