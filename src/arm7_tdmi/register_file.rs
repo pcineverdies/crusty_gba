@@ -59,7 +59,7 @@ pub struct RegisterFile {
     abt_bank: Vec<u32>,  // register  bank for abt mode
     irq_bank: Vec<u32>,  // register  bank for irq mode
     und_bank: Vec<u32>,  // register  bank for und mode
-    cpsr: u32,           // current cpsr
+    pub cpsr: u32,       // current cpsr
     spsr: Vec<u32>,      // spsr bank
 }
 
@@ -81,7 +81,7 @@ impl RegisterFile {
             abt_bank: vec![0; 2],
             irq_bank: vec![0; 2],
             und_bank: vec![0; 2],
-            cpsr: 0x00000010,
+            cpsr: 0x0000001f,
             spsr: vec![0; 5],
         }
     }

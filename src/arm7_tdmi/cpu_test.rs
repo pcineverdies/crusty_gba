@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod cpu_test {
 
-    use crate::arm7_tdmi::{ARM7TDMI, NOP};
+    use crate::arm7_tdmi::{OperatingMode, ARM7TDMI, NOP};
     use crate::bus::{BusSignal, MemoryResponse};
     use std::collections::HashMap;
 
@@ -198,33 +198,31 @@ mod cpu_test {
     }
 
     #[test]
-    fn panda_test() {
+    fn swi_test() {
         let mut cpu = ARM7TDMI::new();
+        let mut found_supervisor = false;
 
         let mut instructions = HashMap::from([
-            (0x08000000_u32, 0xea00002e_u32),
-            (0x080000c0_u32, 0xe3a00301_u32),
-            (0x080000c4_u32, 0xe3a01b01_u32),
-            (0x080000c8_u32, 0xe2811003_u32),
-            (0x080000cc_u32, 0xe1c010b0_u32),
-            (0x080000d0_u32, 0xe3a010f8_u32),
-            (0x080000d4_u32, 0xe2811302_u32),
-            (0x080000d8_u32, 0xe3a02406_u32),
-            (0x080000dc_u32, 0xe3a03000_u32),
-            (0x080000e0_u32, 0xe0d100b2_u32),
-            (0x080000e4_u32, 0xe0c200b2_u32),
-            (0x080000e8_u32, 0xe2833001_u32),
-            (0x080000ec_u32, 0xe3530c96_u32),
-            (0x080000f0_u32, 0xbafffffa_u32),
-            (0x080000f4_u32, 0xeafffffe_u32),
+            (0x00000004_u32, NOP),
+            (0x00000008_u32, 0xE3A03003_u32),
+            (0x0000000c_u32, NOP),
+            (0x00000010_u32, 0xE1B0F00E_u32),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xEF000010_u32),
+            (0x08000008_u32, 0xE3A0E00A_u32),
         ]);
         let mut response = MemoryResponse {
             data: NOP,
             n_wait: BusSignal::HIGH,
         };
 
-        for _ in 0..385000 {
+        for _ in 0..50 {
             let req = cpu.step(response);
+            println!("Executed: {:#08x}", cpu.arm_current_execute);
+            println!("Current 15: {:#08x}", cpu.rf.get_register(15, 0));
+            println!("Current r14: {:#08x}", cpu.rf.get_register(14, 0));
+            println!("Current mode: {:?}", cpu.rf.get_mode());
+            println!("--------------");
             if req.nr_w == BusSignal::LOW {
                 response.data = *instructions
                     .get(&(req.address & 0xFFFFFFFC))
@@ -232,8 +230,60 @@ mod cpu_test {
             } else {
                 instructions.insert(req.address, req.data);
             }
+
+            if cpu.rf.get_mode() == OperatingMode::SUPERVISOR {
+                found_supervisor = true;
+            }
         }
 
-        assert_eq!(cpu.rf.get_register(3, 0), 0x9600);
+        assert_eq!(found_supervisor, true);
+        assert_eq!(cpu.rf.get_register(14, 0), 10);
+        assert_eq!(cpu.rf.get_register(3, 0), 3);
+        assert_eq!(cpu.rf.get_mode(), OperatingMode::USER);
+    }
+
+    #[test]
+    fn und_test() {
+        let mut cpu = ARM7TDMI::new();
+        let mut found_undefined = false;
+
+        let mut instructions = HashMap::from([
+            (0x00000004_u32, NOP),
+            (0x00000008_u32, 0xE3A03003_u32),
+            (0x0000000c_u32, NOP),
+            (0x00000010_u32, 0xE1B0F00E_u32),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE7000010_u32),
+            (0x08000008_u32, 0xE3A0E00A_u32),
+        ]);
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..50 {
+            let req = cpu.step(response);
+            println!("Executed: {:#08x}", cpu.arm_current_execute);
+            println!("Current 15: {:#08x}", cpu.rf.get_register(15, 0));
+            println!("Current r14: {:#08x}", cpu.rf.get_register(14, 0));
+            println!("Current mode: {:?}", cpu.rf.get_mode());
+            println!("--------------");
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+
+            if cpu.rf.get_mode() == OperatingMode::UND {
+                found_undefined = true;
+            }
+        }
+
+        assert_eq!(found_undefined, true);
+        assert_eq!(cpu.rf.get_register(14, 0), 10);
+        assert_eq!(cpu.rf.get_register(3, 0), 3);
+        assert_eq!(cpu.rf.get_mode(), OperatingMode::USER);
     }
 }

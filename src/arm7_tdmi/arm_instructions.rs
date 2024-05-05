@@ -1,6 +1,7 @@
 use crate::arm7_tdmi::instruction::barrel_shifter;
 use crate::arm7_tdmi::instruction::ArmAluOpcode;
 use crate::arm7_tdmi::register_file::ConditionCodeFlag;
+use crate::arm7_tdmi::OperatingMode;
 use crate::arm7_tdmi::{InstructionStep, ARM7TDMI};
 use crate::bus::{BusCycle, BusSignal, MemoryRequest, MemoryResponse, TransferSize};
 use crate::common::BitOperation;
@@ -555,6 +556,86 @@ impl ARM7TDMI {
                     panic!("Wrong step for instructin type ARM_STRD");
                 }
             }
+        }
+    }
+
+    /// arm7_tdmi::arm_swi
+    ///
+    /// Function to handle all the swi instruction
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    pub fn arm_swi(&mut self, req: &mut MemoryRequest) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        if self.instruction_step == InstructionStep::STEP0 {
+            self.arm_instruction_queue.clear();
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.data_is_fetch = false;
+            self.instruction_step = InstructionStep::STEP1;
+        } else if self.instruction_step == InstructionStep::STEP1 {
+            let current_cpsr = self.rf.get_cpsr();
+            let _ = self
+                .rf
+                .write_cpsr((current_cpsr & 0xffffffe0) | (OperatingMode::SUPERVISOR as u32));
+            let _ = self.rf.write_spsr(current_cpsr);
+
+            self.rf.write_register(14, self.rf.get_register(15, 4));
+            self.rf.write_register(15, 0x04);
+
+            req.address = self.rf.get_register(15, 4);
+            self.instruction_step = InstructionStep::STEP2;
+        } else if self.instruction_step == InstructionStep::STEP2 {
+            req.address = self.rf.get_register(15, 8);
+            self.instruction_step = InstructionStep::STEP0;
+        } else {
+            panic!("Wrong step for instructin type ARM_SWI");
+        }
+    }
+
+    /// arm7_tdmi::arm_undefined
+    ///
+    /// Function to handle the undefined instruction, jumping to the proper exception address
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    pub fn arm_undefined(&mut self, req: &mut MemoryRequest) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        if self.instruction_step == InstructionStep::STEP0 {
+            self.arm_instruction_queue.clear();
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.data_is_fetch = false;
+            self.instruction_step = InstructionStep::STEP1;
+        } else if self.instruction_step == InstructionStep::STEP1 {
+            let current_cpsr = self.rf.get_cpsr();
+            let _ = self
+                .rf
+                .write_cpsr((current_cpsr & 0xffffffe0) | (OperatingMode::UND as u32));
+            let _ = self.rf.write_spsr(current_cpsr);
+
+            self.rf.write_register(14, self.rf.get_register(15, 4));
+            self.rf.write_register(15, 0);
+
+            req.address = self.rf.get_register(15, 4);
+            self.instruction_step = InstructionStep::STEP2;
+        } else if self.instruction_step == InstructionStep::STEP2 {
+            req.address = self.rf.get_register(15, 8);
+            req.bus_cycle = BusCycle::INTERNAL;
+            self.instruction_step = InstructionStep::STEP3;
+        } else if self.instruction_step == InstructionStep::STEP3 {
+            self.data_is_fetch = false;
+            self.instruction_step = InstructionStep::STEP0;
+        } else {
+            panic!("Wrong step for instructin type ARM_UND");
         }
     }
 }

@@ -11,7 +11,6 @@ const SCALE_FACTOR: u32 = 3;
 
 pub struct Display {
     sdl_context: Sdl,
-    video_subsystem: sdl2::VideoSubsystem,
     canvas: Canvas<Window>,
 }
 
@@ -37,7 +36,6 @@ impl Display {
 
         Self {
             sdl_context,
-            video_subsystem,
             canvas,
         }
     }

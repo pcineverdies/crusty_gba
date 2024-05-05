@@ -1,6 +1,5 @@
 use crate::{bus::TransferSize, common::BitOperation};
 use byteorder::{LittleEndian, ReadBytesExt};
-use num::Integer;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Read;

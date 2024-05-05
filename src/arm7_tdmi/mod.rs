@@ -31,7 +31,7 @@ enum InstructionStep {
 /// [manual, 2.7].
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u32)]
-enum OperatingMode {
+pub enum OperatingMode {
     SYSTEM = 0b10000,
     USER = 0b11111,
     FIQ = 0b10001,
@@ -119,13 +119,17 @@ impl ARM7TDMI {
             }
             ArmInstructionType::Branch => self.arm_branch(&mut next_request),
             ArmInstructionType::HwTransfer => self.arm_hw_transfer(&mut next_request, &rsp),
-            ArmInstructionType::Undefined => todo!(),
+            ArmInstructionType::SoftwareInterrupt => self.arm_swi(&mut next_request),
+            ArmInstructionType::Undefined => self.arm_undefined(&mut next_request),
             ArmInstructionType::BlockDataTransfer => todo!(),
             ArmInstructionType::Multiply => todo!(),
             ArmInstructionType::MultiplyLong => todo!(),
             ArmInstructionType::SingleDataSwap => todo!(),
-            ArmInstructionType::SoftwareInterrupt => todo!(),
-            ArmInstructionType::Unimplemented => todo!(),
+            ArmInstructionType::Unimplemented => panic!(
+                "The instruction {} at address {} is not implemented and it should not be used",
+                self.arm_current_execute,
+                self.rf.get_register(15, 0)
+            ),
 
             ArmInstructionType::CoprocessorDataTransfer => {
                 panic!("Coprocessor data transfer instructions are not implemented");
