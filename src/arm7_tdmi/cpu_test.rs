@@ -395,4 +395,44 @@ mod cpu_test {
         assert_eq!(cpu.rf.get_register(1, 0), 0xaabbccdd);
         assert_eq!(*instructions.get(&0x4).unwrap_or(&0), 0xff);
     }
+
+    #[test]
+    fn mul_test() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x08000000_u32, 0xe3a0af59_u32), // mov r10, 356
+            (0x08000004_u32, 0xe3e0b00b_u32), // mov r11, -12
+            (0x08000008_u32, 0xe00c0b9a_u32), // mul r12, r10, r11
+            (0x0800000c_u32, 0xe02dba9c_u32), // mul r13, r12, r10, r11
+            (0x08000010_u32, NOP),
+            (0x08000014_u32, 0xe3a01482_u32), // mov r1, 0x82000000
+            (0x08000018_u32, 0xe3a02011_u32), // mov r2, 0x11
+            (0x0800001c_u32, 0xe0843291_u32), // umull r3, r4, r1, r2
+            (0x08000020_u32, 0xe0c65291_u32), // smull r5, r6, r1, r2
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..40 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(12, 0), 0xffffef50);
+        assert_eq!(cpu.rf.get_register(13, 0), 0xffe8cb34);
+        assert_eq!(cpu.rf.get_register(3, 0), 0xa2000000);
+        assert_eq!(cpu.rf.get_register(4, 0), 0x00000008);
+        assert_eq!(cpu.rf.get_register(5, 0), 0xa2000000);
+        assert_eq!(cpu.rf.get_register(6, 0), 0xfffffff7);
+    }
 }

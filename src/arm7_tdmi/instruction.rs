@@ -12,7 +12,6 @@ use crate::common::BitOperation;
 pub enum ArmInstructionType {
     DataProcessing,
     Multiply,
-    MultiplyLong,
     SingleDataSwap,
     BranchAndExchange,
     HwTransfer,
@@ -201,15 +200,9 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
     }
 
     let multiply_format = 0b0000_0000_0000_0000_0000_0000_1001_0000;
-    let format_mask = 0b0000_1111_1100_0000_0000_0000_1111_0000;
+    let format_mask = 0b0000_1111_0000_0000_0000_0000_1111_0000;
     if (data & format_mask) == multiply_format {
         return ArmInstructionType::Multiply;
-    }
-
-    let multiply_long_format = 0b0000_0000_1000_0000_0000_0000_1001_0000;
-    let format_mask = 0b0000_1111_1000_0000_0000_0000_1111_0000;
-    if (data & format_mask) == multiply_long_format {
-        return ArmInstructionType::MultiplyLong;
     }
 
     let halfword_data_transfer_format = 0b0000_0000_0000_0000_0000_0000_1001_0000;
@@ -511,7 +504,7 @@ mod test_instructions {
         // mlaeq r10, r11, r12, r13
         assert_eq!(decode_arm(0x002adc9b), ArmInstructionType::Multiply);
         // smull r10, r11, r12, r13
-        assert_eq!(decode_arm(0xe0cbad9c), ArmInstructionType::MultiplyLong);
+        assert_eq!(decode_arm(0xe0cbad9c), ArmInstructionType::Multiply);
         // bleq 0x10
         assert_eq!(decode_arm(0x0b000002), ArmInstructionType::Branch);
         // bxmi r9

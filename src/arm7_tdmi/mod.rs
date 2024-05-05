@@ -51,6 +51,7 @@ pub struct ARM7TDMI {
     instruction_step: InstructionStep,    // Current instructions stpe for FSM handling
     data_is_fetch: bool,                  // Is next data a fetch?
     last_used_address: u32,               // Store the last address sent on the bus
+    instruction_counter_step: u32,        // For instructions which require many iterations
 }
 
 impl ARM7TDMI {
@@ -65,6 +66,7 @@ impl ARM7TDMI {
             data_is_fetch: true,
             instruction_step: InstructionStep::STEP0,
             last_used_address: 0,
+            instruction_counter_step: 0,
         }
     }
 
@@ -127,9 +129,7 @@ impl ARM7TDMI {
                 self.arm_single_data_swap(&mut next_request, &rsp)
             }
             ArmInstructionType::BlockDataTransfer => todo!(),
-            ArmInstructionType::Multiply => todo!(),
-            ArmInstructionType::MultiplyLong => todo!(),
-
+            ArmInstructionType::Multiply => self.arm_multiply(&mut next_request),
             ArmInstructionType::Unimplemented => panic!(
                 "The instruction {} at address {} is not implemented and it should not be used",
                 self.arm_current_execute,

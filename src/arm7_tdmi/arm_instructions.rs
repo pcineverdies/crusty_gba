@@ -784,4 +784,103 @@ impl ARM7TDMI {
             panic!("Wrong instruction step for SWP");
         }
     }
+
+    /// arm7_tdmi::arm_multiply
+    ///
+    /// Function to handle the mul and mla instructions
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    pub fn arm_multiply(&mut self, req: &mut MemoryRequest) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+        let opcode = self.arm_current_execute.get_range(24, 21);
+        let s_flag = self.arm_current_execute.get_range(20, 20);
+        let rd = self.arm_current_execute.get_range(19, 16);
+        let rn = self.arm_current_execute.get_range(15, 12);
+        let rs = self.arm_current_execute.get_range(11, 8);
+        let rm = self.arm_current_execute.get_range(3, 0);
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        req.bus_cycle = BusCycle::INTERNAL;
+
+        if self.instruction_step == InstructionStep::STEP0 {
+            let op_s = self.rf.get_register(rs, 0);
+
+            self.instruction_step = InstructionStep::STEP1;
+
+            let leading_zeros = op_s.leading_zeros();
+
+            self.instruction_counter_step = if leading_zeros >= 24 {
+                1
+            } else if leading_zeros >= 16 {
+                2
+            } else if leading_zeros >= 8 {
+                3
+            } else {
+                4
+            };
+
+            self.instruction_counter_step += if opcode == 0 {
+                0
+            } else if opcode == 5 || opcode == 7 {
+                2
+            } else {
+                1
+            };
+        } else if self.instruction_step == InstructionStep::STEP1 {
+            self.instruction_counter_step -= 1;
+
+            if self.instruction_counter_step == 0 {
+                let op_s = self.rf.get_register(rs, 0);
+                let op_m = self.rf.get_register(rm, 0);
+                let op_n = self.rf.get_register(rn, 0);
+                let op_d = self.rf.get_register(rd, 0);
+
+                if opcode <= 1 {
+                    let result = if opcode == 0 {
+                        ((op_s as u64) * (op_m as u64)) as u32
+                    } else {
+                        ((op_s as u64) * (op_m as u64) + (op_n as u64)) as u32
+                    };
+
+                    self.rf.write_register(rd, result);
+
+                    if s_flag == 1 {
+                        self.rf.write_z(result == 0);
+                        self.rf.write_n(result.is_bit_set(31));
+                    }
+                } else {
+                    let result = if opcode == 4 {
+                        (op_s as u64) * (op_m as u64)
+                    } else if opcode == 5 {
+                        (op_s as u64) * (op_m as u64) + (op_n as u64 | ((op_d as u64) << 32))
+                    } else if opcode == 6 {
+                        ((op_s as i32 as i64) * (op_m as i32 as i64)) as u64
+                    } else if opcode == 7 {
+                        ((op_s as i32 as i64) * (op_m as i32 as i64)
+                            + ((op_n as u64 | (op_d as u64) << 32) as i32 as i64))
+                            as u64
+                    } else {
+                        panic!("Opcode cannot be used in MUL")
+                    };
+
+                    self.rf.write_register(rd, result.get_range(63, 32) as u32);
+                    self.rf.write_register(rn, result.get_range(31, 0) as u32);
+
+                    if s_flag == 1 {
+                        self.rf.write_z(result == 0);
+                        self.rf.write_n(result.is_bit_set(63));
+                    }
+                }
+
+                self.instruction_step = InstructionStep::STEP0;
+                req.bus_cycle = BusCycle::SEQUENTIAL;
+            }
+        } else {
+            panic!("Wrong step for instructin type ARM_MUL");
+        }
+    }
 }
