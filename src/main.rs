@@ -11,8 +11,10 @@ mod memory;
 
 fn main() {
     let mut gba = bus::Bus::new();
-    let file_name = env::args().nth(1).expect("gba rom must be provided");
-    gba.gamepak.init_from_file(&String::from(&file_name));
+    let rom_file = env::args().nth(1).expect("gba rom must be provided");
+    let bios_file = env::args().nth(2).expect("bios file must be provided");
+    gba.gamepak.init_from_file(&String::from(&rom_file));
+    gba.bios.init_from_file(&String::from(&bios_file));
 
     loop {
         gba.step();

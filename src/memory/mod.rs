@@ -25,9 +25,9 @@ impl Memory {
         }
     }
 
-    pub fn read(&self, address: u32, mas: TransferSize) -> u32 {
+    pub fn read(&self, address: u32, _mas: TransferSize) -> u32 {
         if address - self.init_address > self.size {
-            panic!("Address is to valid while accessing {}", self.name);
+            panic!("Address is to valid while accessing {}: {:#08x}", self.name, address);
         }
 
         // TODO: What happens for misaligned addresses?
@@ -37,7 +37,7 @@ impl Memory {
 
     pub fn read_byte(&self, address: u32) -> u32 {
         if address - self.init_address > self.size {
-            panic!("Address is to valid while accessing {}", self.name);
+            panic!("Address is to valid while accessing {}: {:#08x}", self.name, address);
         }
 
         let offset = address % 4;
@@ -47,7 +47,7 @@ impl Memory {
 
     pub fn read_halfword(&self, address: u32) -> u32 {
         if address - self.init_address > self.size {
-            panic!("Address is to valid while accessing {}", self.name);
+            panic!("Address is to valid while accessing {}: {:#08x}", self.name, address);
         }
 
         let offset = address.is_bit_set(1) as u32;
@@ -57,7 +57,7 @@ impl Memory {
 
     pub fn read_word(&self, address: u32) -> u32 {
         if address - self.init_address > self.size {
-            panic!("Address is to valid while accessing {}", self.name);
+            panic!("Address is to valid while accessing {}: {:#08x}", self.name, address);
         }
 
         self.data[((address - self.init_address) >> 2) as usize]
@@ -65,11 +65,11 @@ impl Memory {
 
     pub fn write(&mut self, address: u32, data: u32, mas: TransferSize) {
         if address - self.init_address > self.size {
-            panic!("Address is to valid while accessing {}", self.name);
+            panic!("Address is to valid while accessing {}: {:#08x}", self.name, address);
         }
 
         if self.is_read_only {
-            return;
+            panic!("Cannot write on read-only memory {}!", self.name);
         }
 
         match mas {

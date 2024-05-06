@@ -38,6 +38,8 @@ impl Gpu {
     }
 
     pub fn step(&mut self) {
+        let mut dispstat = self.gpu_registers.read_halfword(0x04000004);
+
         self.dot_counter += 1;
 
         if self.dot_counter != 4 {
@@ -62,6 +64,24 @@ impl Gpu {
                 self.display_array[(pixel_index * 4 + 1) as usize] =
                     pixel.get_range(14, 10) as u8 * 8;
                 self.display_array[(pixel_index * 4 + 0) as usize] = 0xff;
+            } else if dispcnt.get_range(2, 0) == 4 {
+                let init_address = if dispcnt.is_bit_set(4) {
+                    0x06000000
+                } else {
+                    0x0600a000
+                };
+
+                let palette_color_address = self.vram.read_byte(init_address | pixel_index);
+                let pixel = self
+                    .palette_ram
+                    .read_halfword(0x05000000 | palette_color_address);
+                self.display_array[(pixel_index * 4 + 3) as usize] =
+                    pixel.get_range(4, 0) as u8 * 8;
+                self.display_array[(pixel_index * 4 + 2) as usize] =
+                    pixel.get_range(9, 5) as u8 * 8;
+                self.display_array[(pixel_index * 4 + 1) as usize] =
+                    pixel.get_range(14, 10) as u8 * 8;
+                self.display_array[(pixel_index * 4 + 0) as usize] = 0xff;
             }
         }
 
@@ -72,10 +92,27 @@ impl Gpu {
             self.v_counter += 1;
         }
 
-        if self.v_counter == 160 + 68 {
+        if self.v_counter == (160 + 68) {
             self.v_counter = 0;
             self.display.update(&self.display_array);
         }
+
+        if self.v_counter >= 160 && self.v_counter < 227 {
+            dispstat = dispstat.set_bit(0);
+        } else {
+            dispstat = dispstat.clear_bit(0);
+        }
+
+        if self.h_counter >= 251 {
+            dispstat = dispstat.set_bit(1);
+        } else {
+            dispstat = dispstat.clear_bit(1);
+        }
+
+        self.gpu_registers
+            .write(0x04000006, self.v_counter << 16, TransferSize::HALFWORD);
+        self.gpu_registers
+            .write(0x04000004, dispstat, TransferSize::HALFWORD);
     }
 
     pub fn read(&self, address: u32, mas: TransferSize) -> u32 {

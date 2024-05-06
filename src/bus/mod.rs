@@ -69,6 +69,9 @@ pub struct Bus {
     pub cpu: arm7_tdmi::ARM7TDMI,
     pub gpu: gpu::Gpu,
     pub gamepak: memory::Memory,
+    pub ewram: memory::Memory,
+    pub iwram: memory::Memory,
+    pub bios: memory::Memory,
     next_cpu_response: MemoryResponse,
     next_transaction: BusCycle,
 }
@@ -79,6 +82,9 @@ impl Bus {
             cpu: arm7_tdmi::ARM7TDMI::new(),
             gpu: gpu::Gpu::new(),
             gamepak: memory::Memory::new(0x08000000, 0x06000000, true, String::from("GAMEPAK")),
+            ewram: memory::Memory::new(0x02000000, 0x00040000, false, String::from("EWRAM")),
+            iwram: memory::Memory::new(0x03000000, 0x00008000, false, String::from("IWRAM")),
+            bios: memory::Memory::new(0x00000000, 0x00004000, true, String::from("BIOS")),
             next_cpu_response: MemoryResponse {
                 data: arm7_tdmi::NOP,
                 n_wait: BusSignal::HIGH,
@@ -109,6 +115,12 @@ impl Bus {
 
         if req.address >= 0x08000000 && req.address <= 0x0dffffff {
             rsp.data = self.gamepak.read(req.address, req.mas)
+        } else if req.address <= 0x00003ffff {
+            rsp.data = self.bios.read(req.address, req.mas)
+        } else if req.address >= 0x02000000 && req.address <= 0x02ffffff {
+            rsp.data = self.ewram.read(req.address & 0x0203ffff, req.mas)
+        } else if req.address >= 0x03000000 && req.address <= 0x03ffffff {
+            rsp.data = self.iwram.read(req.address & 0x03007fff, req.mas)
         } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
             rsp.data = self.gpu.read(req.address, req.mas);
         } else if req.address >= 0x05000000 && req.address <= 0x05000400 {
@@ -132,6 +144,14 @@ impl Bus {
 
         if req.address >= 0x08000000 && req.address <= 0x0dffffff {
             self.gamepak.write(req.address, req.data, req.mas)
+        } else if req.address <= 0x00003ffff {
+            self.bios.write(req.address, req.data, req.mas)
+        } else if req.address >= 0x02000000 && req.address <= 0x02ffffff {
+            self.ewram
+                .write(req.address & 0x0203ffff, req.data, req.mas)
+        } else if req.address >= 0x03000000 && req.address <= 0x03ffffff {
+            self.iwram
+                .write(req.address & 0x03007fff, req.data, req.mas)
         } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
             self.gpu.write(req.address, req.data, req.mas);
         } else if req.address >= 0x05000000 && req.address <= 0x05000400 {
