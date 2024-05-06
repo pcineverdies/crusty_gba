@@ -52,6 +52,7 @@ pub struct ARM7TDMI {
     data_is_fetch: bool,                  // Is next data a fetch?
     last_used_address: u32,               // Store the last address sent on the bus
     instruction_counter_step: u32,        // For instructions which require many iterations
+    list_transfer_op: Vec<(u32, u32)>,    // List of operations to perform for ldm and stm
 }
 
 impl ARM7TDMI {
@@ -67,6 +68,7 @@ impl ARM7TDMI {
             instruction_step: InstructionStep::STEP0,
             last_used_address: 0,
             instruction_counter_step: 0,
+            list_transfer_op: Vec::new(),
         }
     }
 
@@ -128,10 +130,12 @@ impl ARM7TDMI {
             ArmInstructionType::SingleDataSwap => {
                 self.arm_single_data_swap(&mut next_request, &rsp)
             }
-            ArmInstructionType::BlockDataTransfer => todo!(),
+            ArmInstructionType::BlockDataTransfer => {
+                self.arm_block_data_transfer(&mut next_request, &rsp)
+            }
             ArmInstructionType::Multiply => self.arm_multiply(&mut next_request),
             ArmInstructionType::Unimplemented => panic!(
-                "The instruction {} at address {} is not implemented and it should not be used",
+                "The instruction {:#08x} at address {:#08x} is not implemented and it should not be used",
                 self.arm_current_execute,
                 self.rf.get_register(15, 0)
             ),

@@ -178,7 +178,7 @@ impl ARM7TDMI {
             // If the operation is branch and link, store the next instruction to be used in the
             // link register
             if opcode == 1 {
-                self.rf.write_register(14, current_pc);
+                self.rf.write_register(14, current_pc.wrapping_add(4));
             }
 
             // Increment only by 4 due to the automatic increase of the pc at the end of the
@@ -270,10 +270,10 @@ impl ARM7TDMI {
                 address_to_write = address_to_mem.wrapping_sub(offset);
             }
 
+            req.address = address_to_mem;
             if p_flag == 1 {
                 req.address = address_to_write;
             } else if tw_flag == 1 {
-                req.address = address_to_mem;
                 req.n_trans = BusSignal::LOW;
             }
 
@@ -881,6 +881,237 @@ impl ARM7TDMI {
             }
         } else {
             panic!("Wrong step for instructin type ARM_MUL");
+        }
+    }
+
+    /// arm7_tdmi::arm_block_data_transfer
+    ///
+    /// Function to handle all the block data transfer instructions (LDM, STM)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
+    pub fn arm_block_data_transfer(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let condition = self.arm_current_execute.get_range(31, 28);
+        let p_flag = self.arm_current_execute.get_range(24, 24);
+        let u_flag = self.arm_current_execute.get_range(23, 23);
+        let s_flag = self.arm_current_execute.get_range(22, 22);
+        let w_flag = self.arm_current_execute.get_range(21, 21);
+        let l_flag = self.arm_current_execute.get_range(20, 20);
+        let rn = self.arm_current_execute.get_range(19, 16);
+        let mut r_list = self.arm_current_execute.get_range(15, 0);
+        let mut was_list_empy = false;
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        if rn == 15 {
+            panic!("Cannot use r15 in LDM and STM instructions");
+        }
+
+        if r_list == 0 {
+            r_list = r_list.set_bit(15);
+            was_list_empy = true;
+        }
+
+        let items_to_handle = r_list.count_ones();
+
+        if self.instruction_step == InstructionStep::STEP0 {
+            self.list_transfer_op.clear();
+
+            let mut mask_counter = 0;
+            let mut address_to_use = self.rf.get_register(rn, 0);
+
+            if u_flag == 0 && p_flag == 0 {
+                address_to_use = address_to_use
+                    .wrapping_sub(items_to_handle * 4)
+                    .wrapping_add(4);
+            } else if u_flag == 0 && p_flag == 1 {
+                address_to_use = address_to_use.wrapping_sub(items_to_handle * 4);
+            } else if u_flag == 1 && p_flag == 1 {
+                address_to_use = address_to_use.wrapping_add(4);
+            }
+
+            while mask_counter < 16 {
+                while (1 << mask_counter) & r_list == 0 && mask_counter < 16 {
+                    mask_counter += 1;
+                }
+
+                if mask_counter >= 16 {
+                    break;
+                }
+
+                self.list_transfer_op.push((address_to_use, mask_counter));
+
+                address_to_use = address_to_use.wrapping_add(4);
+                mask_counter += 1;
+            }
+        }
+
+        // println!(
+        //     "instruction {:#08x}, data generated is as follows:",
+        //     self.arm_current_execute
+        // );
+        // println!("{:?}", list_to_do);
+        // println!("---------------------------------------------------------------------");
+
+        // STM instruction
+        if l_flag == 0 {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+
+                self.instruction_counter_step = 0;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                let register_to_use =
+                    self.list_transfer_op[self.instruction_counter_step as usize].1;
+
+                if p_flag == 1 {
+                    if !was_list_empy {
+                        if w_flag == 1 && u_flag == 0 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
+                        } else if w_flag == 1 && u_flag == 1 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
+                        }
+                    } else {
+                        if w_flag == 1 && u_flag == 0 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
+                        } else if w_flag == 1 && u_flag == 1 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
+                        }
+                    }
+                }
+
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::SEQUENTIAL;
+
+                req.address = self.list_transfer_op[self.instruction_counter_step as usize].0;
+                req.nr_w = BusSignal::HIGH;
+
+                req.data = if s_flag == 1 {
+                    self.rf.get_user_register(register_to_use, 12)
+                } else {
+                    self.rf.get_register(register_to_use, 12)
+                };
+
+                if p_flag == 0 {
+                    if !was_list_empy {
+                        if w_flag == 1 && u_flag == 0 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
+                        } else if w_flag == 1 && u_flag == 1 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
+                        }
+                    } else {
+                        if w_flag == 1 && u_flag == 0 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
+                        } else if w_flag == 1 && u_flag == 1 {
+                            self.rf
+                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
+                        }
+                    }
+                }
+
+                // println!(
+                //     "Instruction {:#08x}: writing register {} at address {:#08x}",
+                //     self.arm_current_execute,
+                //     self.list_transfer_op[self.instruction_counter_step as usize].1,
+                //     req.address
+                // );
+
+                self.instruction_counter_step += 1;
+
+                if self.instruction_counter_step == items_to_handle {
+                    req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                    self.instruction_step = InstructionStep::STEP0;
+                }
+            } else {
+                panic!("Wrong step for STM instruction");
+            }
+
+        // LDM instruction
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+
+                self.instruction_counter_step = 0;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::SEQUENTIAL;
+                req.address = self.list_transfer_op[0].0;
+                if items_to_handle == 1 {
+                    req.bus_cycle = BusCycle::INTERNAL;
+                }
+
+                self.instruction_counter_step += 1;
+                self.instruction_step = InstructionStep::STEP2;
+            } else if self.instruction_step == InstructionStep::STEP2 {
+                self.data_is_fetch = false;
+
+                if !was_list_empy {
+                    if w_flag == 1 && u_flag == 0 {
+                        self.rf
+                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
+                    } else if w_flag == 1 && u_flag == 1 {
+                        self.rf
+                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
+                    }
+                } else {
+                    if w_flag == 1 && u_flag == 0 {
+                        self.rf
+                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
+                    } else if w_flag == 1 && u_flag == 1 {
+                        self.rf
+                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
+                    }
+                }
+
+                if s_flag == 1 && r_list.is_bit_set(15) {
+                    self.rf.write_register(
+                        self.list_transfer_op[(self.instruction_counter_step - 1) as usize].1,
+                        rsp.data,
+                    );
+                } else {
+                    self.rf.write_user_register(
+                        self.list_transfer_op[(self.instruction_counter_step - 1) as usize].1,
+                        rsp.data,
+                    );
+                }
+
+                if items_to_handle == self.instruction_counter_step {
+                    if r_list.is_bit_set(15) {
+                        req.bus_cycle = BusCycle::INTERNAL;
+                        self.arm_instruction_queue.clear();
+                        self.instruction_step = InstructionStep::STEP3;
+                    } else {
+                        self.instruction_step = InstructionStep::STEP0;
+                    }
+                } else {
+                    if self.instruction_counter_step + 1 == items_to_handle {
+                        req.bus_cycle = BusCycle::INTERNAL;
+                    }
+                    req.address = self.list_transfer_op[self.instruction_counter_step as usize].0;
+                    self.instruction_counter_step += 1;
+                }
+            } else if self.instruction_step == InstructionStep::STEP3 {
+                req.address = self.rf.get_register(15, 0);
+                self.instruction_step = InstructionStep::STEP4;
+            } else if self.instruction_step == InstructionStep::STEP4 {
+                req.address = self.rf.get_register(15, 4);
+                self.rf
+                    .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong step for LDM instruction");
+            }
         }
     }
 }

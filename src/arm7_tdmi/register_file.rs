@@ -74,6 +74,8 @@ impl RegisterFile {
         // r15 gets this value so that the first instruction to be fetched is at
         // the expected address
         registers[15] = 0x07fffff8;
+        registers[14] = 0x08000000;
+        registers[13] = 0x03007f00;
         Self {
             registers,
             fiq_bank: vec![0; 7],
@@ -118,6 +120,22 @@ impl RegisterFile {
         }
     }
 
+    /// RegisterFile::get_user_register
+    ///
+    /// Get one of the 16 general purpose registers from user mode only
+    ///
+    /// @param index [u32]: which of the registers to use
+    /// @param pc_increment [u32]: how much to increment the program counter if it is required
+    /// @return [u32]: register
+    pub fn get_user_register(&self, index: u32, pc_increment: u32) -> u32 {
+        let index = index as usize;
+        if index == 15 {
+            self.registers[index].wrapping_add(pc_increment)
+        } else {
+            self.registers[index]
+        }
+    }
+
     /// RegisterFile::write_register
     ///
     /// Write one of the 16 general purpose registers, using the correct bank depending on the
@@ -147,6 +165,17 @@ impl RegisterFile {
             15 => self.registers[15] = value,
             _ => panic!("Wrong index used in `get_register`: {}", index),
         };
+    }
+
+    /// RegisterFile::write_user_register
+    ///
+    /// Write one of the 16 user registers
+    ///
+    /// @param index [u32]: which of the registers to use
+    /// @param value [u32]: new content of the register
+    pub fn write_user_register(&mut self, index: u32, value: u32) {
+        let index = index as usize;
+        self.registers[index] = value;
     }
 
     /// RegisterFile::get_cpsr
