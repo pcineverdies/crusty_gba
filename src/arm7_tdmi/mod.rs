@@ -82,7 +82,6 @@ impl ARM7TDMI {
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
         // memory.
-        //
         let mut next_request = MemoryRequest {
             address: self.rf.get_register(15, 8),               // Implements only arm mode
             nr_w: BusSignal::LOW,                               // Read operation
@@ -158,6 +157,8 @@ impl ARM7TDMI {
             self.rf.write_register(15, self.rf.get_register(15, 4));
         }
 
+        // Always remember the address which was used in the last bus transaction. This is useful
+        // for the execution of many instructions handling memory.
         self.last_used_address = next_request.address;
         next_request
     }

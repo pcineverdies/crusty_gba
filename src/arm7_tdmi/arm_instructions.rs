@@ -241,15 +241,25 @@ impl ARM7TDMI {
         // Common between load and store: during step1, the bus transaction to store/load is
         // generated, so in this step we need the address to be used.
         if self.instruction_step == InstructionStep::STEP1 {
+            // immediate offset flag
             let i_flag = self.arm_current_execute.get_range(25, 25);
+
+            // up/down flag (is the offset to be added or substracted?)
             let u_flag = self.arm_current_execute.get_range(23, 23);
+
+            // Value in case of immediate flag 0
             let immediate = self.arm_current_execute.get_range(11, 0);
+
+            // In case of immediate flag 1, the value is obtained by a register shifted by a
+            // certain amount using a specific function of the barrel shifter.
             let shift_amount = self.arm_current_execute.get_range(11, 7);
             let shift_type = self.arm_current_execute.get_range(6, 5);
             let rm = self.arm_current_execute.get_range(3, 0);
 
+            // Address to use as read from the base register
             address_to_mem = self.rf.get_register(rn, 8);
 
+            // Compute the offset
             if i_flag == 0 {
                 offset = immediate;
             } else {
@@ -264,19 +274,23 @@ impl ARM7TDMI {
                 );
             }
 
-            if u_flag == 1 {
-                address_to_write = address_to_mem.wrapping_add(offset);
+            // Either add or substract the offset depending on the value
+            address_to_write = if u_flag == 1 {
+                address_to_mem.wrapping_add(offset)
             } else {
-                address_to_write = address_to_mem.wrapping_sub(offset);
-            }
+                address_to_mem.wrapping_sub(offset)
+            };
 
             req.address = address_to_mem;
+
+            // If the instruction requires a pre-modification, use the modify value as address.
             if p_flag == 1 {
                 req.address = address_to_write;
             } else if tw_flag == 1 {
                 req.n_trans = BusSignal::LOW;
             }
 
+            // In case of byte transfer, modify the transfer size
             if b_flag == 1 {
                 req.mas = TransferSize::BYTE;
             }
@@ -290,7 +304,9 @@ impl ARM7TDMI {
             } else if self.instruction_step == InstructionStep::STEP1 {
                 self.data_is_fetch = false;
                 req.bus_cycle = BusCycle::INTERNAL;
-                // Post increment of the base register
+
+                // Post increment of the base register either if p is zero or if p is 1 and w is
+                // set
                 if p_flag == 0 || tw_flag == 1 {
                     self.rf.write_register(rn, address_to_write);
                 }
@@ -345,12 +361,14 @@ impl ARM7TDMI {
             } else if self.instruction_step == InstructionStep::STEP1 {
                 req.data = self.rf.get_register(rd, 12);
 
-                // If only one byte is to be moved, copy the byte over all the 32 lines of the bus
+                // If only one byte is to be moved, copy the byte over all the 32 lines of the bus.
                 if b_flag == 1 {
                     let byte = req.data & 0xff;
                     req.data = byte | (byte << 8) | (byte << 16) | (byte << 24);
                 }
 
+                // Post increment of the base register either if p is zero or if p is 1 and w is
+                // set
                 if p_flag == 0 || tw_flag == 1 {
                     self.rf.write_register(rn, address_to_write);
                 }
@@ -373,6 +391,8 @@ impl ARM7TDMI {
     /// be modified by the function depending on what the current instruction does).
     /// @param rsp [&MemoryResponse]: response from the memory
     pub fn arm_hw_transfer(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        // Most of the flags and operation are identical to what is done in the normal store and
+        // load operations.
         let condition = self.arm_current_execute.get_range(31, 28);
         let p_flag = self.arm_current_execute.get_range(24, 24);
         let u_flag = self.arm_current_execute.get_range(23, 23);
@@ -397,7 +417,10 @@ impl ARM7TDMI {
             panic!("Opcode reserved for SWP instruction");
         }
 
+        // Compute the load/store address in case of step 1 in execution
         if self.instruction_step == InstructionStep::STEP1 {
+            // Compute the offset either by using the immediate in the instruction or by fetching
+            // a register
             offset = if i_flag == 1 {
                 (imm_offset_h << 4) | rm
             } else {
@@ -407,12 +430,14 @@ impl ARM7TDMI {
                 self.rf.get_register(rm, 0)
             };
 
+            // Either increment of decrement the address depending on the request
             address_to_write = if u_flag == 1 {
                 address_to_mem.wrapping_add(offset)
             } else {
                 address_to_mem.wrapping_sub(offset)
             };
 
+            // Use the modified address in case of a pre-modification
             req.address = if p_flag == 1 {
                 address_to_write
             } else {
@@ -420,6 +445,7 @@ impl ARM7TDMI {
             }
         }
 
+        // Load instruction
         if l_flag == 1 {
             if self.instruction_step == InstructionStep::STEP0 {
                 req.bus_cycle = BusCycle::NONSEQUENTIAL;
@@ -444,21 +470,19 @@ impl ARM7TDMI {
                 let mut data_to_write = rsp.data;
                 let offset = self.last_used_address % 4;
 
-                if opcode == 2 {
+                // ldrsb instruction -> load signed byte
+                if opcode == 0b10 {
                     data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
-                    if data_to_write.is_bit_set(7) {
-                        data_to_write |= 0xffffff00;
-                    } else {
-                        data_to_write &= 0x000000ff;
-                    }
+                    data_to_write = ((data_to_write as i8) as i32) as u32;
                 } else {
-                    if offset == 2 {
-                        data_to_write >>= 16;
-                    }
-                    if data_to_write.is_bit_set(15) && opcode == 3 {
-                        data_to_write |= 0xffff0000;
-                    } else {
-                        data_to_write &= 0x0000ffff;
+                    // If we are requiring the upper halfword of a word-aligned address, then get
+                    // the 16 msbs. Otherwise the 16 lsbs. Since the address used is always (?) a
+                    // multiple of 2, then offset is either 2 or 0.
+                    data_to_write = data_to_write.get_range(15 + 8 * offset, 8 * offset);
+
+                    // ldrsh -> load signed halfword, sign extend the data to use
+                    if opcode == 0b11 {
+                        data_to_write = ((data_to_write as i16) as i32) as u32;
                     }
                 }
 
@@ -487,8 +511,8 @@ impl ARM7TDMI {
                 panic!("Wrong step for instructin type ARM_LOAD_HW");
             }
         } else {
-            // strh
-            if opcode == 1 {
+            // strh -> store halfword
+            if opcode == 0b01 {
                 if self.instruction_step == InstructionStep::STEP0 {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP1;
@@ -499,8 +523,11 @@ impl ARM7TDMI {
                     }
 
                     req.mas = TransferSize::HALFWORD;
+
+                    // get the data
                     req.data = self.rf.get_register(rd, 12);
                     req.data = (req.data & 0xffff) | (req.data << 16);
+
                     req.nr_w = BusSignal::HIGH;
                     self.instruction_step = InstructionStep::STEP0;
                     self.data_is_fetch = false;
@@ -508,7 +535,8 @@ impl ARM7TDMI {
                     panic!("Wrong step for instructin type ARM_STRH");
                 }
 
-            // ldrd
+            // ldrd -> load doubleword. It basically consists in performing 2 load operations one
+            // after the other
             } else if opcode == 2 {
                 if self.instruction_step == InstructionStep::STEP0 {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
@@ -517,6 +545,7 @@ impl ARM7TDMI {
                     if req.address % 8 != 0 {
                         panic!("Address must be double-word aligned in ARM_LDRD");
                     }
+                    // The register can be only a multiple of 2, and not r14
                     if rd % 2 != 0 || rd == 14 {
                         panic!("rd must be even and less than 12 in ARM_LDRD");
                     }
@@ -526,6 +555,8 @@ impl ARM7TDMI {
                     self.data_is_fetch = false;
                     req.bus_cycle = BusCycle::INTERNAL;
                     self.rf.write_register(rd, rsp.data);
+                    // The address to use is the previous one + 4. The usage of the static
+                    // variables allows to avoid a recomputation of the register.
                     req.address = self.last_used_address + 4;
                     self.instruction_step = InstructionStep::STEP3;
                 } else if self.instruction_step == InstructionStep::STEP3 {
@@ -536,7 +567,8 @@ impl ARM7TDMI {
                     panic!("Wrong step for instruction type ARM_LDRD")
                 }
 
-            // strd
+            // strd -> store doubleword. It basically consists in performing 2 store operations one
+            // after the other
             } else if opcode == 3 {
                 if self.instruction_step == InstructionStep::STEP0 {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
@@ -547,6 +579,8 @@ impl ARM7TDMI {
                     self.instruction_step = InstructionStep::STEP2;
                     self.data_is_fetch = false;
                 } else if self.instruction_step == InstructionStep::STEP2 {
+                    // The address to use is the previous one + 4. The usage of the static
+                    // variables allows to avoid a recomputation of the register.
                     req.address = self.last_used_address + 4;
                     req.data = self.rf.get_register(rd + 1, 0);
                     req.nr_w = BusSignal::HIGH;
@@ -572,21 +606,36 @@ impl ARM7TDMI {
             return;
         }
 
+        // The objective of the instruction is to empty the pipeline and restore the execution at
+        // address 0x00000008 in supervisor mode.
+        // TODO: check what you have to set when executing an exception
+
         if self.instruction_step == InstructionStep::STEP0 {
             self.arm_instruction_queue.clear();
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
             self.data_is_fetch = false;
             self.instruction_step = InstructionStep::STEP1;
         } else if self.instruction_step == InstructionStep::STEP1 {
+            // Store the current cpsr in the spsr of the new mode
             let current_cpsr = self.rf.get_cpsr();
-            let _ = self
-                .rf
-                .write_cpsr((current_cpsr & 0xffffffe0) | (OperatingMode::SUPERVISOR as u32));
-            let _ = self.rf.write_spsr(current_cpsr);
 
+            if self
+                .rf
+                .write_cpsr((current_cpsr & 0xffffffe0) | (OperatingMode::SUPERVISOR as u32))
+                .is_err()
+            {
+                panic!("Invalid mode assigned to cpsr")
+            }
+            if self.rf.write_spsr(current_cpsr).is_err() {
+                panic!("Invalid mode assigned to spsr")
+            }
+
+            // Modify the register r14 with the return address
             self.rf.write_register(14, self.rf.get_register(15, 4));
+            // r15 = 0x08 (it will be updated at the end of the current instruction)
             self.rf.write_register(15, 0x04);
 
+            // Refill the pipeline
             req.address = self.rf.get_register(15, 4);
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
@@ -605,6 +654,8 @@ impl ARM7TDMI {
     /// be modified by the function depending on what the current instruction does).
     pub fn arm_undefined(&mut self, req: &mut MemoryRequest) {
         let condition = self.arm_current_execute.get_range(31, 28);
+
+        // The undefined exception is identical to the swi excpetion in term of functionality
 
         if !self.rf.check_condition_code(condition) {
             return;
@@ -655,6 +706,7 @@ impl ARM7TDMI {
             panic!("Cannot specify r15 as destination address for mrs")
         }
 
+        // Get either the spsr or cpsr register and then move it to the destination register
         let source_register = if psr_flag == 0 {
             self.rf.get_cpsr()
         } else {
@@ -691,26 +743,34 @@ impl ARM7TDMI {
             imm.rotate_right(shift * 2)
         };
 
+        // the write operation affects either spsr or cpsr
         let mut to_modify = if psr_flag == 1 {
             self.rf.get_spsr()
         } else {
             self.rf.get_cpsr()
         };
 
+        // the control field can be modified in all the modes but USER
         if c_flag == 1 && self.rf.get_mode() != OperatingMode::USER {
             to_modify = to_modify & 0xffffff00;
             to_modify = to_modify | (source_operand & 0x000000ff);
         }
 
+        // the flag field can be always modified
         if f_flag == 1 {
             to_modify = to_modify & 0x0fffffff;
             to_modify = to_modify | (source_operand & 0xf0000000);
         }
 
+        // modify the target register, by checking that the mode chosen is valid
         if psr_flag == 1 {
-            let _ = self.rf.write_spsr(to_modify);
+            if self.rf.write_spsr(to_modify).is_err() {
+                panic!("Invalid mode assigned to spsr")
+            }
         } else {
-            let _ = self.rf.write_cpsr(to_modify);
+            if self.rf.write_cpsr(to_modify).is_err() {
+                panic!("Invalid mode assigned to cpsr")
+            }
         }
     }
 
@@ -744,38 +804,49 @@ impl ARM7TDMI {
             self.data_is_fetch = false;
 
             req.address = self.rf.get_register(rn, 0);
+
+            // Either use a word or a byte
             req.mas = if b_flag == 0 {
                 TransferSize::WORD
             } else {
                 TransferSize::BYTE
             };
+
+            // Not an opcode operation
             req.n_opc = BusSignal::HIGH;
+
+            // lock signal is high, to ensure that the operation is going to be atomic
             req.lock = BusSignal::HIGH;
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
 
-            self.last_used_address = req.address;
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
             self.data_is_fetch = false;
 
             req.address = self.rf.get_register(rn, 0);
             if b_flag == 0 {
+                // Write the response back to the destination register
                 self.rf.write_register(rd, rsp.data);
+                // The new writing size is a word
                 req.mas = TransferSize::WORD;
+                // Write the new data to be used
                 req.data = self.rf.get_register(rm, 0);
             } else {
+                // Get the byte to be written back to the register
                 let mut data_to_write = rsp.data;
                 data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
                 self.rf.write_register(rd, data_to_write);
+                // The new writing size is byte
                 req.mas = TransferSize::BYTE;
+                // Get the data and move it 4 times to the 32 available bits
                 req.data = self.rf.get_register(rm, 0).get_range(7, 0);
                 req.data = req.data | (req.data << 8) | (req.data << 16) | (req.data << 24);
             };
+            // Writing operation with lock bit high
             req.nr_w = BusSignal::HIGH;
             req.n_opc = BusSignal::HIGH;
             req.lock = BusSignal::HIGH;
             req.bus_cycle = BusCycle::INTERNAL;
-
             self.instruction_step = InstructionStep::STEP3;
         } else if self.instruction_step == InstructionStep::STEP3 {
             self.data_is_fetch = false;
@@ -811,17 +882,10 @@ impl ARM7TDMI {
 
             self.instruction_step = InstructionStep::STEP1;
 
-            let leading_zeros = op_s.leading_zeros();
-
-            self.instruction_counter_step = if leading_zeros >= 24 {
-                1
-            } else if leading_zeros >= 16 {
-                2
-            } else if leading_zeros >= 8 {
-                3
-            } else {
-                4
-            };
+            // The length of the operation depends on the number of leading zeros of the second
+            // operand. Then some extra cycles should be added in case of "multiply and add" and
+            // long multiplications
+            self.instruction_counter_step = 4 - (op_s.leading_zeros() >> 3);
 
             self.instruction_counter_step += if opcode == 0 {
                 0
@@ -831,8 +895,10 @@ impl ARM7TDMI {
                 1
             };
         } else if self.instruction_step == InstructionStep::STEP1 {
+            self.data_is_fetch = false;
             self.instruction_counter_step -= 1;
 
+            // When the proper number of cycles is passed, we perform the operation all at once
             if self.instruction_counter_step == 0 {
                 let op_s = self.rf.get_register(rs, 0);
                 let op_m = self.rf.get_register(rm, 0);
@@ -840,25 +906,32 @@ impl ARM7TDMI {
                 let op_d = self.rf.get_register(rd, 0);
 
                 if opcode <= 1 {
+                    // unsigned multiplication
                     let result = if opcode == 0 {
                         ((op_s as u64) * (op_m as u64)) as u32
+                    // unsigned multply and add
                     } else {
                         ((op_s as u64) * (op_m as u64) + (op_n as u64)) as u32
                     };
 
                     self.rf.write_register(rd, result);
 
+                    // Possibly update the flags
                     if s_flag == 1 {
                         self.rf.write_z(result == 0);
                         self.rf.write_n(result.is_bit_set(31));
                     }
                 } else {
+                    // unsigned long multiplication
                     let result = if opcode == 4 {
                         (op_s as u64) * (op_m as u64)
+                    // unsigned long multiplication and add
                     } else if opcode == 5 {
                         (op_s as u64) * (op_m as u64) + (op_n as u64 | ((op_d as u64) << 32))
+                    // signed long multplication
                     } else if opcode == 6 {
                         ((op_s as i32 as i64) * (op_m as i32 as i64)) as u64
+                    // signed long multiplication and add
                     } else if opcode == 7 {
                         ((op_s as i32 as i64) * (op_m as i32 as i64)
                             + ((op_n as u64 | (op_d as u64) << 32) as i32 as i64))
@@ -867,9 +940,11 @@ impl ARM7TDMI {
                         panic!("Opcode cannot be used in MUL")
                     };
 
+                    // Update the destination registers
                     self.rf.write_register(rd, result.get_range(63, 32) as u32);
                     self.rf.write_register(rn, result.get_range(31, 0) as u32);
 
+                    // Possibly update the registers
                     if s_flag == 1 {
                         self.rf.write_z(result == 0);
                         self.rf.write_n(result.is_bit_set(63));
@@ -910,19 +985,35 @@ impl ARM7TDMI {
             panic!("Cannot use r15 in LDM and STM instructions");
         }
 
+        // If the list of registers is empty, r15 should be handled, with some weird corner cases
+        // on the destination register
         if r_list == 0 {
             r_list = r_list.set_bit(15);
             was_list_empy = true;
         }
 
+        // Coun the number of registers to handle
         let items_to_handle = r_list.count_ones();
 
+        // Compute an array containing each address to be used and the register associated to that
+        // address. In this context, the register with lower index is always associated to the
+        // lower adddress. It is important to take into account up/down counting and pre/post
+        // modification. This list is stored statically so that it can be accessed at further
+        // stages of the instruction.
         if self.instruction_step == InstructionStep::STEP0 {
+            // Clear previous list
             self.list_transfer_op.clear();
 
-            let mut mask_counter = 0;
+            let mut register_counter = 0;
+
+            // Initial address
             let mut address_to_use = self.rf.get_register(rn, 0);
 
+            // Find the smallest address involved in the process:
+            // u == 0, p == 0: post decrement
+            // u == 0, p == 1: pre decrement
+            // u == 1, p == 0: post increment
+            // u == 1, p == 1: pre increment
             if u_flag == 0 && p_flag == 0 {
                 address_to_use = address_to_use
                     .wrapping_sub(items_to_handle * 4)
@@ -933,28 +1024,24 @@ impl ARM7TDMI {
                 address_to_use = address_to_use.wrapping_add(4);
             }
 
-            while mask_counter < 16 {
-                while (1 << mask_counter) & r_list == 0 && mask_counter < 16 {
-                    mask_counter += 1;
+            'ext_loop: while register_counter < 16 {
+                // Go over the list of registers until a bit set is found
+                while (1 << register_counter) & r_list == 0 {
+                    register_counter += 1;
+                    // Break if all the bits have been covered
+                    if register_counter == 16 {
+                        break 'ext_loop;
+                    }
                 }
 
-                if mask_counter >= 16 {
-                    break;
-                }
-
-                self.list_transfer_op.push((address_to_use, mask_counter));
+                // Push to the list the pair (address, register)
+                self.list_transfer_op
+                    .push((address_to_use, register_counter));
 
                 address_to_use = address_to_use.wrapping_add(4);
-                mask_counter += 1;
+                register_counter += 1;
             }
         }
-
-        // println!(
-        //     "instruction {:#08x}, data generated is as follows:",
-        //     self.arm_current_execute
-        // );
-        // println!("{:?}", list_to_do);
-        // println!("---------------------------------------------------------------------");
 
         // STM instruction
         if l_flag == 0 {
@@ -964,70 +1051,37 @@ impl ARM7TDMI {
 
                 self.instruction_counter_step = 0;
             } else if self.instruction_step == InstructionStep::STEP1 {
+                // From the list of registers which was previosly build, extract the register which
+                // will be stored
                 let register_to_use =
                     self.list_transfer_op[self.instruction_counter_step as usize].1;
 
+                // pre incremnt (this is important in case the base register is also in the list)
                 if p_flag == 1 {
-                    if !was_list_empy {
-                        if w_flag == 1 && u_flag == 0 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
-                        } else if w_flag == 1 && u_flag == 1 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
-                        }
-                    } else {
-                        if w_flag == 1 && u_flag == 0 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
-                        } else if w_flag == 1 && u_flag == 1 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
-                        }
-                    }
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
                 }
 
                 self.data_is_fetch = false;
                 req.bus_cycle = BusCycle::SEQUENTIAL;
-
                 req.address = self.list_transfer_op[self.instruction_counter_step as usize].0;
                 req.nr_w = BusSignal::HIGH;
 
+                // Use user data or general data depending on s_flag
                 req.data = if s_flag == 1 {
                     self.rf.get_user_register(register_to_use, 12)
                 } else {
                     self.rf.get_register(register_to_use, 12)
                 };
 
+                // Post increment
                 if p_flag == 0 {
-                    if !was_list_empy {
-                        if w_flag == 1 && u_flag == 0 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
-                        } else if w_flag == 1 && u_flag == 1 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
-                        }
-                    } else {
-                        if w_flag == 1 && u_flag == 0 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
-                        } else if w_flag == 1 && u_flag == 1 {
-                            self.rf
-                                .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
-                        }
-                    }
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
                 }
 
-                // println!(
-                //     "Instruction {:#08x}: writing register {} at address {:#08x}",
-                //     self.arm_current_execute,
-                //     self.list_transfer_op[self.instruction_counter_step as usize].1,
-                //     req.address
-                // );
-
+                // Next register to handle
                 self.instruction_counter_step += 1;
 
+                // If enough registers have been handled, the instruction is completed
                 if self.instruction_counter_step == items_to_handle {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP0;
@@ -1044,6 +1098,7 @@ impl ARM7TDMI {
 
                 self.instruction_counter_step = 0;
             } else if self.instruction_step == InstructionStep::STEP1 {
+                // Request of the first data to load
                 self.data_is_fetch = false;
                 req.bus_cycle = BusCycle::SEQUENTIAL;
                 req.address = self.list_transfer_op[0].0;
@@ -1056,29 +1111,16 @@ impl ARM7TDMI {
             } else if self.instruction_step == InstructionStep::STEP2 {
                 self.data_is_fetch = false;
 
-                if !was_list_empy {
-                    if w_flag == 1 && u_flag == 0 {
-                        self.rf
-                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
-                    } else if w_flag == 1 && u_flag == 1 {
-                        self.rf
-                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
-                    }
-                } else {
-                    if w_flag == 1 && u_flag == 0 {
-                        self.rf
-                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
-                    } else if w_flag == 1 && u_flag == 1 {
-                        self.rf
-                            .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
-                    }
-                }
+                self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
 
+                // Use the normal registers if s_flag and r15 is in the list of registers to load:
+                // move the response from the memory into the register
                 if s_flag == 1 && r_list.is_bit_set(15) {
                     self.rf.write_register(
                         self.list_transfer_op[(self.instruction_counter_step - 1) as usize].1,
                         rsp.data,
                     );
+                // Use the user registers
                 } else {
                     self.rf.write_user_register(
                         self.list_transfer_op[(self.instruction_counter_step - 1) as usize].1,
@@ -1086,6 +1128,8 @@ impl ARM7TDMI {
                     );
                 }
 
+                // In case all the registers have been moved, either we fetch the pipeline or we
+                // stop
                 if items_to_handle == self.instruction_counter_step {
                     if r_list.is_bit_set(15) {
                         req.bus_cycle = BusCycle::INTERNAL;
@@ -1094,6 +1138,7 @@ impl ARM7TDMI {
                     } else {
                         self.instruction_step = InstructionStep::STEP0;
                     }
+                // Otherwise, we move to a new load from memory
                 } else {
                     if self.instruction_counter_step + 1 == items_to_handle {
                         req.bus_cycle = BusCycle::INTERNAL;
@@ -1111,6 +1156,36 @@ impl ARM7TDMI {
                 self.instruction_step = InstructionStep::STEP0;
             } else {
                 panic!("Wrong step for LDM instruction");
+            }
+        }
+    }
+
+    /// arm7_tdmi::modify_register_ldm_stm
+    ///
+    /// In LDM and STM, the base register might be incremented or decremented after each transfer,
+    /// either a load or a store. This function takes care of considering the different cases and
+    /// the corner case of an empty list.
+    ///
+    /// @param was_list_empy [bool]: whether teh list was empty or not
+    /// @param w_flag [u32]: write back flag
+    /// @param u_flag [u32]: direction flag
+    /// @param rn [u32]: base register
+    fn modify_register_ldm_stm(&mut self, was_list_empy: bool, w_flag: u32, u_flag: u32, rn: u32) {
+        if !was_list_empy {
+            if w_flag == 1 && u_flag == 0 {
+                self.rf
+                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
+            } else if w_flag == 1 && u_flag == 1 {
+                self.rf
+                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
+            }
+        } else {
+            if w_flag == 1 && u_flag == 0 {
+                self.rf
+                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(0x40));
+            } else if w_flag == 1 && u_flag == 1 {
+                self.rf
+                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(0x40));
             }
         }
     }

@@ -71,10 +71,15 @@ impl RegisterFile {
     pub fn new() -> Self {
         let mut registers = vec![0; 16];
 
-        // r15 gets this value so that the first instruction to be fetched is at
-        // the expected address
+        // r15 gets this value so that the first instruction to be fetched is at the expected
+        // address
         registers[15] = 0x07fffff8;
+
+        // r14 is initialized with the start vector
         registers[14] = 0x08000000;
+
+        // r13 is initialized by the bios with a default value in iwram. As long as the bios is not
+        // implemented, this value shuold be fixed
         registers[13] = 0x03007f00;
         Self {
             registers,
@@ -101,10 +106,14 @@ impl RegisterFile {
         let mode = self.cpsr.get_range(4, 0);
         match index {
             0..=7 => self.registers[index],
+
+            // only FIQ has different r8-r12 registers
             8..=12 => match mode {
                 mode if mode == OperatingMode::FIQ as u32 => self.fiq_bank[index - 8],
                 _ => self.registers[index],
             },
+
+            // Each mode has a different r13-r14 register
             13..=14 => match mode {
                 mode if mode == OperatingMode::SYSTEM as u32 => self.registers[index],
                 mode if mode == OperatingMode::USER as u32 => self.registers[index],
@@ -115,6 +124,8 @@ impl RegisterFile {
                 mode if mode == OperatingMode::UND as u32 => self.und_bank[index - 13],
                 _ => panic!("Illegal mode {:#05b} in cpsr", mode),
             },
+
+            // r15 is the same of each mode
             15 => self.registers[15].wrapping_add(pc_increment),
             _ => panic!("Wrong index used in `get_register`: {}", index),
         }
@@ -122,7 +133,9 @@ impl RegisterFile {
 
     /// RegisterFile::get_user_register
     ///
-    /// Get one of the 16 general purpose registers from user mode only
+    /// Get one of the 16 general purpose registers from user mode only. This is useful when
+    /// handling stm and ldm, since depending on the flags the adopted registers are those in user
+    /// mode.
     ///
     /// @param index [u32]: which of the registers to use
     /// @param pc_increment [u32]: how much to increment the program counter if it is required
@@ -169,7 +182,9 @@ impl RegisterFile {
 
     /// RegisterFile::write_user_register
     ///
-    /// Write one of the 16 user registers
+    /// Write one of the 16 general purpose registers from user mode only. This is useful when
+    /// handling stm and ldm, since depending on the flags the adopted registers are those in user
+    /// mode.
     ///
     /// @param index [u32]: which of the registers to use
     /// @param value [u32]: new content of the register
@@ -189,7 +204,7 @@ impl RegisterFile {
 
     /// RegisterFile::write_cpsr
     ///
-    /// Modify the content of cpsr
+    /// Modify the content of cpsr. The mode of the new cpsr shuld be a valid one
     ///
     /// @param value [u32]: value to use
     /// @return [Result<(), ()>]: Err if the operating mode is not correct, Ok otherwise
@@ -203,7 +218,7 @@ impl RegisterFile {
 
     /// RegisterFile::write_v
     ///
-    /// Modify the the v flag
+    /// Modify the the v flag, either by setting or clearing it.
     ///
     /// @param v [bool]: true if v is to be set, false otherwise
     pub fn write_v(&mut self, v: bool) {
@@ -216,7 +231,7 @@ impl RegisterFile {
 
     /// RegisterFile::write_n
     ///
-    /// Modify the the n flag
+    /// Modify the the n flag, either by setting or clearing it.
     ///
     /// @param n [bool]: true if n is to be set, false otherwise
     pub fn write_n(&mut self, n: bool) {
@@ -229,7 +244,7 @@ impl RegisterFile {
 
     /// RegisterFile::write_c
     ///
-    /// Modify the the c flag
+    /// Modify the the c flag, either by setting or clearing it.
     ///
     /// @param c [bool]: true if c is to be set, false otherwise
     pub fn write_c(&mut self, c: bool) {
@@ -242,7 +257,7 @@ impl RegisterFile {
 
     /// RegisterFile::write_z
     ///
-    /// Modify the the Z flag
+    /// Modify the the z flag, either by setting or clearing it.
     ///
     /// @param z [bool]: true if z is to be set, false otherwise
     pub fn write_z(&mut self, z: bool) {

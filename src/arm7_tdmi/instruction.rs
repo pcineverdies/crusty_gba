@@ -235,7 +235,7 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
 /// instruction::barrel_shifter
 ///
 /// Performs a a shift operation using the internal barrel shift of arm, taking into account all
-/// the weird corner cases.
+/// the weird corner cases as explained both in the arm manual and gbatek.
 ///
 /// @param operand [u32]: opearand to shift
 /// @param shift_type [u32]: what kind of shift to use (must be in range 0..3)
@@ -347,7 +347,9 @@ impl ARM7TDMI {
     /// arm7_tdmi::alu
     ///
     /// Implement the arm alu for arithmetic instructions, by both computing the correct result and generating the two expected
-    /// flags, carry and overflow.
+    /// flags, carry and overflow. The carry flag is set as the 32th bit of the operation. In order
+    /// to obtain it, all the operations are performed by extending the operands. The overflow flag
+    /// is used to handle overflow with operations between signed numbers.
     ///
     /// @param operand1 [u32]: first input of the alu
     /// @param operand2 [u32]: second input of the alu
