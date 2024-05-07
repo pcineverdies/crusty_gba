@@ -3,9 +3,12 @@ mod cpu_test;
 mod instruction;
 mod register_file;
 
-use crate::arm7_tdmi::instruction::{decode_arm, ArmInstructionType};
+use crate::arm7_tdmi::instruction::{
+    decode_arm, decode_thumb, ArmInstructionType, ThumbInstructionType,
+};
 use crate::arm7_tdmi::register_file::RegisterFile;
 use crate::bus::{BusCycle, BusSignal, MemoryRequest, MemoryResponse, TransferSize};
+use crate::common::BitOperation;
 use std::collections::VecDeque;
 
 /// Definition of a NOP instruction used to initialize the CPU
@@ -46,8 +49,8 @@ pub enum OperatingMode {
 /// structure to represent the arm cpu
 pub struct ARM7TDMI {
     pub rf: register_file::RegisterFile,  // Register File
-    arm_instruction_queue: VecDeque<u32>, // Instruction queue (arm)
-    pub arm_current_execute: u32,         // Current executed instruction (arm)
+    arm_instruction_queue: VecDeque<u32>, // Instruction queue
+    pub arm_current_execute: u32,         // Current executed instruction
     instruction_step: InstructionStep,    // Current instructions stpe for FSM handling
     data_is_fetch: bool,                  // Is next data a fetch?
     last_used_address: u32,               // Store the last address sent on the bus
@@ -79,13 +82,30 @@ impl ARM7TDMI {
     /// @param [MemoryResponse]: response from the bus to a previous request of the cpu.
     /// @return [MemoryRequest]: request from the cpu towards the bus.
     pub fn step(&mut self, rsp: MemoryResponse) -> MemoryRequest {
+        let thumb_mode_active = self.rf.get_cpsr().is_bit_set(5);
+
+        println!(
+            "Executing {:#010x} from address {:#010x}; thumb mode: {:?}",
+            self.arm_current_execute,
+            self.rf.get_register(15, 0),
+            thumb_mode_active
+        );
+
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
         // memory.
         let mut next_request = MemoryRequest {
-            address: self.rf.get_register(15, 8),               // Implements only arm mode
+            address: if thumb_mode_active {
+                self.rf.get_register(15, 4)
+            } else {
+                self.rf.get_register(15, 8)
+            },
             nr_w: BusSignal::LOW,                               // Read operation
-            mas: TransferSize::WORD,                            // Reads 32 bits
+            mas: if thumb_mode_active{                          // Size of transfer
+                TransferSize::HALFWORD
+            } else {
+                TransferSize::WORD
+            },
             n_opc: BusSignal::LOW,                              // Requires an opcode
             data: 0,
             n_trans:                                            // Whether we are priviliged
@@ -95,7 +115,11 @@ impl ARM7TDMI {
                     BusSignal::HIGH
                 },
             lock: BusSignal::LOW,                               // No swap opeartion
-            t_bit: BusSignal::LOW,                              // arm mode
+            t_bit: if thumb_mode_active {                       // Select current mode
+                BusSignal::HIGH
+            } else {
+                BusSignal::LOW
+            },
             bus_cycle: BusCycle::SEQUENTIAL,                    // bus cycle is sequential
         };
 
@@ -106,47 +130,80 @@ impl ARM7TDMI {
 
         // A fetch was in progress: add the data to the instruction queue
         if self.data_is_fetch {
-            self.arm_instruction_queue.push_back(rsp.data);
+            if !thumb_mode_active {
+                self.arm_instruction_queue.push_back(rsp.data);
+            } else {
+                if self.last_used_address.is_bit_clear(1) {
+                    self.arm_instruction_queue
+                        .push_back(rsp.data.get_range(15, 0));
+                } else {
+                    self.arm_instruction_queue
+                        .push_back(rsp.data.get_range(31, 16));
+                }
+            }
         }
 
         self.data_is_fetch = true;
 
-        // In case of arm mode, decode the current executed function
-        match decode_arm(self.arm_current_execute) {
-            ArmInstructionType::DataProcessing => self.arm_data_processing(&mut next_request),
-            ArmInstructionType::BranchAndExchange => {
-                self.arm_branch_and_exchange(&mut next_request)
-            }
-            ArmInstructionType::SingleDataTransfer => {
-                self.arm_single_data_transfer(&mut next_request, &rsp)
-            }
-            ArmInstructionType::Branch => self.arm_branch(&mut next_request),
-            ArmInstructionType::HwTransfer => self.arm_hw_transfer(&mut next_request, &rsp),
-            ArmInstructionType::SoftwareInterrupt => self.arm_swi(&mut next_request),
-            ArmInstructionType::Undefined => self.arm_undefined(&mut next_request),
-            ArmInstructionType::PsrTransferMRS => self.arm_psr_transfer_mrs(),
-            ArmInstructionType::PsrTransferMSR => self.arm_psr_transfer_msr(),
-            ArmInstructionType::SingleDataSwap => {
-                self.arm_single_data_swap(&mut next_request, &rsp)
-            }
-            ArmInstructionType::BlockDataTransfer => {
-                self.arm_block_data_transfer(&mut next_request, &rsp)
-            }
-            ArmInstructionType::Multiply => self.arm_multiply(&mut next_request),
-            ArmInstructionType::Unimplemented => panic!(
-                "The instruction {:#08x} at address {:#08x} is not implemented and it should not be used",
-                self.arm_current_execute,
-                self.rf.get_register(15, 0)
-            ),
+        if !thumb_mode_active {
+            match decode_arm(self.arm_current_execute) {
+                ArmInstructionType::DataProcessing => self.arm_data_processing(&mut next_request),
+                ArmInstructionType::BranchAndExchange => {
+                    self.arm_branch_and_exchange(&mut next_request, &rsp)
+                }
+                ArmInstructionType::SingleDataTransfer => {
+                    self.arm_single_data_transfer(&mut next_request, &rsp)
+                }
+                ArmInstructionType::Branch => self.arm_branch(&mut next_request),
+                ArmInstructionType::HwTransfer => self.arm_hw_transfer(&mut next_request, &rsp),
+                ArmInstructionType::SoftwareInterrupt => self.arm_swi(&mut next_request),
+                ArmInstructionType::Undefined => self.arm_undefined(&mut next_request),
+                ArmInstructionType::PsrTransferMRS => self.arm_psr_transfer_mrs(),
+                ArmInstructionType::PsrTransferMSR => self.arm_psr_transfer_msr(),
+                ArmInstructionType::SingleDataSwap => {
+                    self.arm_single_data_swap(&mut next_request, &rsp)
+                }
+                ArmInstructionType::BlockDataTransfer => {
+                    self.arm_block_data_transfer(&mut next_request, &rsp)
+                }
+                ArmInstructionType::Multiply => self.arm_multiply(&mut next_request),
+                ArmInstructionType::Unimplemented => panic!(
+                    "The instruction {:#08x} at address {:#08x} is not implemented and it should not be used",
+                    self.arm_current_execute,
+                    self.rf.get_register(15, 0)
+                ),
 
-            ArmInstructionType::CoprocessorDataTransfer => {
-                panic!("Coprocessor data transfer instructions are not implemented");
+                ArmInstructionType::CoprocessorDataTransfer => {
+                    panic!("Coprocessor data transfer instructions are not implemented");
+                }
+                ArmInstructionType::CoprocessorDataOperation => {
+                    panic!("Coprocessor data operation instructions are not implemented");
+                }
+                ArmInstructionType::CoprocessorRegisterTransfer => {
+                    panic!("Coprocessor register transfer instructions are not implemented");
+                }
             }
-            ArmInstructionType::CoprocessorDataOperation => {
-                panic!("Coprocessor data operation instructions are not implemented");
-            }
-            ArmInstructionType::CoprocessorRegisterTransfer => {
-                panic!("Coprocessor register transfer instructions are not implemented");
+        } else {
+            match decode_thumb(self.arm_current_execute) {
+                ThumbInstructionType::MoveShiftedRegister => todo!(),
+                ThumbInstructionType::AddSubtract => todo!(),
+                ThumbInstructionType::AluImmediate => todo!(),
+                ThumbInstructionType::Alu => todo!(),
+                ThumbInstructionType::HiRegisterBx => todo!(),
+                ThumbInstructionType::PcRelativeLoad => todo!(),
+                ThumbInstructionType::LoadStoreRegOffset => todo!(),
+                ThumbInstructionType::LoadStoreSignExt => todo!(),
+                ThumbInstructionType::LoadStoreImmOffset => todo!(),
+                ThumbInstructionType::LoadStoreHalfWord => todo!(),
+                ThumbInstructionType::SpRelativeLoadStore => todo!(),
+                ThumbInstructionType::LoadAddress => todo!(),
+                ThumbInstructionType::AddOffsetToSp => todo!(),
+                ThumbInstructionType::PushPopRegister => todo!(),
+                ThumbInstructionType::MultipleLoadStore => todo!(),
+                ThumbInstructionType::ConditionalBranch => todo!(),
+                ThumbInstructionType::SoftwareInterrupt => todo!(),
+                ThumbInstructionType::UncoditionalBranch => todo!(),
+                ThumbInstructionType::LongBranchWithLink => todo!(),
             }
         }
 
@@ -154,11 +211,19 @@ impl ARM7TDMI {
         // front of the queue and updating the program counter
         if self.instruction_step == InstructionStep::STEP0 {
             self.arm_current_execute = self.arm_instruction_queue.pop_front().unwrap();
-            self.rf.write_register(15, self.rf.get_register(15, 4));
+
+            // Arm mode in the current value of cpsr
+            if !self.rf.get_cpsr().is_bit_set(5) {
+                self.rf.write_register(15, self.rf.get_register(15, 4));
+            // Thumb mode in the current value of cpsr
+            } else {
+                self.rf.write_register(15, self.rf.get_register(15, 2));
+            }
         }
 
         // Always remember the address which was used in the last bus transaction. This is useful
         // for the execution of many instructions handling memory.
+        println!("Asking for {:#010x}", next_request.address);
         self.last_used_address = next_request.address;
         next_request
     }

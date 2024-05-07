@@ -133,17 +133,58 @@ impl ARM7TDMI {
     /// arm7_tdmi::arm_branch_and_exchange
     ///
     /// TBD
-    pub fn arm_branch_and_exchange(&mut self, _req: &mut MemoryRequest) {
+    pub fn arm_branch_and_exchange(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let condition = self.arm_current_execute.get_range(31, 28);
+        let rn = self.arm_current_execute.get_range(3, 0);
+        let mut destination_address = self.rf.get_register(rn, 8);
+        let use_thumb_mode = destination_address.is_bit_set(0);
+        destination_address = destination_address.clear_bit(0);
+
+        if !self.rf.check_condition_code(condition) {
+            return;
+        }
 
         if self.instruction_step == InstructionStep::STEP0 {
-            if !self.rf.check_condition_code(condition) {
-                return;
-            }
+            self.arm_instruction_queue.clear();
+            self.data_is_fetch = false;
 
-            todo!("Switching to thumb mode behaviour");
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.data_is_fetch = false;
+            self.instruction_step = InstructionStep::STEP1;
         } else if self.instruction_step == InstructionStep::STEP1 {
+            if use_thumb_mode {
+                req.mas = TransferSize::HALFWORD;
+            } else {
+                req.mas = TransferSize::WORD;
+            }
+            req.address = destination_address;
+            req.bus_cycle = BusCycle::SEQUENTIAL;
+            self.data_is_fetch = false;
+            self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
+            if use_thumb_mode {
+                if self.last_used_address.is_bit_clear(1) {
+                    self.arm_instruction_queue
+                        .push_back(rsp.data.get_range(15, 0));
+                } else {
+                    self.arm_instruction_queue
+                        .push_back(rsp.data.get_range(31, 16));
+                }
+                req.mas = TransferSize::HALFWORD;
+                req.address = destination_address.wrapping_add(2);
+                self.rf
+                    .write_register(15, destination_address.wrapping_sub(2));
+                let _ = self.rf.write_cpsr(self.rf.get_cpsr().set_bit(5));
+            } else {
+                req.mas = TransferSize::WORD;
+                req.address = destination_address.wrapping_add(4);
+                self.arm_instruction_queue.push_back(rsp.data);
+                self.rf
+                    .write_register(15, destination_address.wrapping_sub(4));
+                let _ = self.rf.write_cpsr(self.rf.get_cpsr().clear_bit(5));
+            }
+            req.bus_cycle = BusCycle::SEQUENTIAL;
+            self.instruction_step = InstructionStep::STEP0;
         } else {
             panic!("Wrong step for instructin type ARM_BRANCH_AND_EXCHANGE");
         }

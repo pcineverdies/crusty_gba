@@ -149,7 +149,7 @@ pub enum ArmAluShiftCodes {
     ROR = 3,
 }
 
-/// instruction::decode_arg
+/// instruction::decode_arm
 ///
 /// Get the type of ARM instruction given its opcode. This function has been implemented thanks to
 /// [this](https://www.gregorygaines.com/blog/decoding-the-arm7tdmi-instruction-set-game-boy-advance/) article by Gregory Gaines.
@@ -490,10 +490,164 @@ impl ARM7TDMI {
     }
 }
 
+/// instruction::ThumbInstructionType
+///
+/// enum to represent the different categories of instructions which have to be handled while in
+/// THUMB mode. Using these categories, multiple instructions can be grouped together, taking into
+/// account their similar behaviours.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[allow(dead_code)]
+pub enum ThumbInstructionType {
+    MoveShiftedRegister,
+    AddSubtract,
+    AluImmediate,
+    Alu,
+    HiRegisterBx,
+    PcRelativeLoad,
+    LoadStoreRegOffset,
+    LoadStoreSignExt,
+    LoadStoreImmOffset,
+    LoadStoreHalfWord,
+    SpRelativeLoadStore,
+    LoadAddress,
+    AddOffsetToSp,
+    PushPopRegister,
+    MultipleLoadStore,
+    ConditionalBranch,
+    SoftwareInterrupt,
+    UncoditionalBranch,
+    LongBranchWithLink,
+}
+
+/// instruction::decode_thumb
+///
+/// Get the type of THUMB instruction given its opcode.
+///
+/// @param data [u32]: instruction to decode
+/// @return [ArmInstructionType]: type of the instruction
+pub fn decode_thumb(data: u32) -> ThumbInstructionType {
+    let format = 0b_1111_0000_0000_0000;
+    let format_mask = 0b_1111_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::LongBranchWithLink;
+    }
+
+    let format = 0b_1110_0000_0000_0000;
+    let format_mask = 0b_1111_1000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::UncoditionalBranch;
+    }
+
+    let format = 0b_1101_1111_0000_0000;
+    let format_mask = 0b_1111_1111_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::SoftwareInterrupt;
+    }
+
+    let format = 0b_1101_0000_0000_0000;
+    let format_mask = 0b_1111_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::ConditionalBranch;
+    }
+
+    let format = 0b_1100_0000_0000_0000;
+    let format_mask = 0b_1111_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::MultipleLoadStore;
+    }
+
+    let format = 0b_1011_0100_0000_0000;
+    let format_mask = 0b_1111_0110_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::PushPopRegister;
+    }
+
+    let format = 0b_1011_0000_0000_0000;
+    let format_mask = 0b_1111_1111_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::AddOffsetToSp;
+    }
+
+    let format = 0b_1010_0000_0000_0000;
+    let format_mask = 0b_1111_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::LoadAddress;
+    }
+
+    let format = 0b_1001_0000_0000_0000;
+    let format_mask = 0b_1111_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::SpRelativeLoadStore;
+    }
+
+    let format = 0b_1000_0000_0000_0000;
+    let format_mask = 0b_1111_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::LoadStoreHalfWord;
+    }
+
+    let format = 0b_0110_0000_0000_0000;
+    let format_mask = 0b_1110_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::LoadStoreImmOffset;
+    }
+
+    let format = 0b_0101_0010_0000_0000;
+    let format_mask = 0b_1111_0010_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::LoadStoreSignExt;
+    }
+
+    let format = 0b_0101_0000_0000_0000;
+    let format_mask = 0b_1111_0010_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::LoadStoreRegOffset;
+    }
+
+    let format = 0b_0100_1000_0000_0000;
+    let format_mask = 0b_1111_1000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::PcRelativeLoad;
+    }
+
+    let format = 0b_0100_0100_0000_0000;
+    let format_mask = 0b_1111_1100_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::HiRegisterBx;
+    }
+
+    let format = 0b_0100_0000_0000_0000;
+    let format_mask = 0b_1111_1100_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::Alu;
+    }
+
+    let format = 0b_0010_0000_0000_0000;
+    let format_mask = 0b_1110_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::AluImmediate;
+    }
+
+    let format = 0b_0001_1000_0000_0000;
+    let format_mask = 0b_1111_1000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::AddSubtract;
+    }
+
+    let format = 0b_0000_0000_0000_0000;
+    let format_mask = 0b_1110_0000_0000_0000;
+    if (data & format_mask) == format {
+        return ThumbInstructionType::MoveShiftedRegister;
+    }
+
+    panic!("Instruction not valid in thumb mode: {:#010x}", data);
+}
 #[cfg(test)]
 mod test_instructions {
 
-    use crate::arm7_tdmi::instruction::{decode_arm, ArmInstructionType};
+    use crate::arm7_tdmi::instruction::{
+        decode_arm, decode_thumb, ArmInstructionType, ThumbInstructionType,
+    };
 
     #[test]
     fn test_arm_decode() {
@@ -530,15 +684,114 @@ mod test_instructions {
 
         // undefined
         assert_eq!(decode_arm(0xf7ffffff), ArmInstructionType::Undefined);
+
         // ldmia r0, {r5 - r8}
         assert_eq!(
             decode_arm(0xe89001e0),
             ArmInstructionType::BlockDataTransfer
         );
+
         // swi 0x30
         assert_eq!(
             decode_arm(0xef000030),
             ArmInstructionType::SoftwareInterrupt
+        );
+
+        assert_eq!(
+            decode_thumb(0xdf0a),
+            ThumbInstructionType::SoftwareInterrupt
+        );
+
+        assert_eq!(
+            decode_thumb(0b00000000_00000000),
+            ThumbInstructionType::MoveShiftedRegister
+        );
+
+        assert_eq!(
+            decode_thumb(0b00011000_00000000),
+            ThumbInstructionType::AddSubtract
+        );
+
+        assert_eq!(
+            decode_thumb(0b00100000_00000000),
+            ThumbInstructionType::AluImmediate
+        );
+
+        assert_eq!(decode_thumb(0b01000000_00000000), ThumbInstructionType::Alu);
+
+        assert_eq!(
+            decode_thumb(0b01000100_00000000),
+            ThumbInstructionType::HiRegisterBx
+        );
+
+        assert_eq!(
+            decode_thumb(0b01001000_00000000),
+            ThumbInstructionType::PcRelativeLoad
+        );
+
+        assert_eq!(
+            decode_thumb(0b01011101_00000000),
+            ThumbInstructionType::LoadStoreRegOffset
+        );
+
+        assert_eq!(
+            decode_thumb(0b01011110_00000000),
+            ThumbInstructionType::LoadStoreSignExt
+        );
+
+        assert_eq!(
+            decode_thumb(0b01111111_00000000),
+            ThumbInstructionType::LoadStoreImmOffset
+        );
+
+        assert_eq!(
+            decode_thumb(0b10000000_00000000),
+            ThumbInstructionType::LoadStoreHalfWord
+        );
+
+        assert_eq!(
+            decode_thumb(0b10011111_00000000),
+            ThumbInstructionType::SpRelativeLoadStore
+        );
+
+        assert_eq!(
+            decode_thumb(0b10100111_00000000),
+            ThumbInstructionType::LoadAddress
+        );
+
+        assert_eq!(
+            decode_thumb(0b10110000_00000100),
+            ThumbInstructionType::AddOffsetToSp
+        );
+
+        assert_eq!(
+            decode_thumb(0b10111100_00000100),
+            ThumbInstructionType::PushPopRegister
+        );
+
+        assert_eq!(
+            decode_thumb(0b11001100_00000100),
+            ThumbInstructionType::MultipleLoadStore
+        );
+
+        assert_eq!(
+            decode_thumb(0b11010100_00000100),
+            ThumbInstructionType::ConditionalBranch
+        );
+
+        assert_eq!(
+            decode_thumb(0b11011111_00000100),
+            ThumbInstructionType::SoftwareInterrupt
+        );
+
+        assert_eq!(
+            decode_thumb(0b11100111_00000100),
+            ThumbInstructionType::UncoditionalBranch
+        );
+
+        assert_eq!(
+            decode_thumb(0b11111111_11111111),
+            ThumbInstructionType::LongBranchWithLink
         );
     }
 }

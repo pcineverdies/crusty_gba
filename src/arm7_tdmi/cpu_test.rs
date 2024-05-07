@@ -474,4 +474,41 @@ mod cpu_test {
         assert_eq!(cpu.rf.get_register(12, 0), 0x4_u32);
         assert_eq!(cpu.rf.get_register(13, 0), 0x7_u32);
     }
+
+    #[test]
+    fn bx_test() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x2222_1111),
+            (0x00100004_u32, 0x4444_3333),
+            (0x00100008_u32, 0x6666_5555),
+            (0x0010000c_u32, 0x8888_7777),
+            (0x00100010_u32, 0xaaaa_9999),
+            (0x00100014_u32, 0xcccc_bbbb),
+            (0x00100018_u32, 0xffff_dddd),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE12FFF1A_u32),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..8 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.arm_current_execute, 0x00001111);
+    }
 }
