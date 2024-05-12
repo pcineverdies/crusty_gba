@@ -1,5 +1,6 @@
 use crate::arm7_tdmi;
 use crate::gpu;
+use crate::io::keypad;
 use crate::memory;
 
 /// bus::TransferSize
@@ -68,12 +69,15 @@ pub struct MemoryResponse {
 pub struct Bus {
     pub cpu: arm7_tdmi::ARM7TDMI,
     pub gpu: gpu::Gpu,
+    pub keypad: keypad::Keypad,
     pub gamepak: memory::Memory,
+    pub gamepak_sram: memory::Memory,
     pub ewram: memory::Memory,
     pub iwram: memory::Memory,
     pub bios: memory::Memory,
     next_cpu_response: MemoryResponse,
     next_transaction: BusCycle,
+    step_counter: u64,
 }
 
 impl Bus {
@@ -81,7 +85,9 @@ impl Bus {
         Self {
             cpu: arm7_tdmi::ARM7TDMI::new(),
             gpu: gpu::Gpu::new(),
+            keypad: keypad::Keypad::new(),
             gamepak: memory::Memory::new(0x08000000, 0x06000000, true, String::from("GAMEPAK")),
+            gamepak_sram: memory::Memory::new(0x0e000000, 0x10000, false, String::from("GAMEPAK")),
             ewram: memory::Memory::new(0x02000000, 0x00040000, false, String::from("EWRAM")),
             iwram: memory::Memory::new(0x03000000, 0x00008000, false, String::from("IWRAM")),
             bios: memory::Memory::new(0x00000000, 0x00004000, true, String::from("BIOS")),
@@ -90,12 +96,17 @@ impl Bus {
                 n_wait: BusSignal::HIGH,
             },
             next_transaction: BusCycle::SEQUENTIAL,
+            step_counter: 0,
         }
     }
 
     pub fn step(&mut self) {
         let cpu_request = self.cpu.step(self.next_cpu_response);
         self.gpu.step();
+
+        if self.step_counter % 279620 == 0 {
+            self.keypad.step();
+        }
 
         if self.next_transaction != BusCycle::INTERNAL {
             if cpu_request.nr_w == BusSignal::LOW {
@@ -105,6 +116,8 @@ impl Bus {
             }
         }
         self.next_transaction = cpu_request.bus_cycle;
+
+        self.step_counter += 1;
     }
 
     fn read(&mut self, req: MemoryRequest) -> MemoryResponse {
@@ -113,22 +126,28 @@ impl Bus {
             n_wait: BusSignal::HIGH,
         };
 
-        if req.address >= 0x08000000 && req.address <= 0x0dffffff {
-            rsp.data = self.gamepak.read(req.address, req.mas)
-        } else if req.address <= 0x00003ffff {
+        if req.address <= 0x00003ffff {
             rsp.data = self.bios.read(req.address, req.mas)
         } else if req.address >= 0x02000000 && req.address <= 0x02ffffff {
             rsp.data = self.ewram.read(req.address & 0x0203ffff, req.mas)
         } else if req.address >= 0x03000000 && req.address <= 0x03ffffff {
             rsp.data = self.iwram.read(req.address & 0x03007fff, req.mas)
-        } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
+        } else if req.address >= 0x04000000 && req.address <= 0x04000058 {
             rsp.data = self.gpu.read(req.address, req.mas);
+        } else if req.address >= 0x04000130 && req.address <= 0x04000133 {
+            rsp.data = self.keypad.read(req.address, req.mas);
         } else if req.address >= 0x05000000 && req.address <= 0x05000400 {
+            rsp.data = self.gpu.read(req.address, req.mas);
+        } else if req.address >= 0x06000000 && req.address <= 0x06018000 {
             rsp.data = self.gpu.read(req.address, req.mas);
         } else if req.address >= 0x07000000 && req.address <= 0x07000400 {
             rsp.data = self.gpu.read(req.address, req.mas);
-        } else if req.address >= 0x04000000 && req.address <= 0x04000058 {
-            rsp.data = self.gpu.read(req.address, req.mas);
+        } else if req.address >= 0x08000000 && req.address <= 0x0dffffff {
+            rsp.data = self.gamepak.read(req.address, req.mas)
+        } else if req.address >= 0x0e000000 {
+            rsp.data = self
+                .gamepak_sram
+                .read(req.address & 0xffff | 0x0e000000, req.mas)
         } else {
             todo!("reading from {:#08x}", req.address);
         }
@@ -160,6 +179,11 @@ impl Bus {
             self.gpu.write(req.address, req.data, req.mas);
         } else if req.address >= 0x04000000 && req.address <= 0x04000058 {
             self.gpu.write(req.address, req.data, req.mas);
+        } else if req.address >= 0x04000130 && req.address <= 0x04000133 {
+            self.keypad.write(req.address, req.data, req.mas);
+        } else if req.address >= 0x0e000000 {
+            self.gamepak_sram
+                .write(req.address & 0xffff | 0x0e000000, req.data, req.mas);
         } else {
             todo!("writing to {:#08x}", req.address);
         }

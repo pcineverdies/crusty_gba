@@ -7,6 +7,7 @@ mod arm7_tdmi;
 mod bus;
 mod common;
 mod gpu;
+mod io;
 mod memory;
 
 fn main() {

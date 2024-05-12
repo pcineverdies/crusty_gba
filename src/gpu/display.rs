@@ -1,16 +1,12 @@
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormat, PixelFormatEnum};
 use sdl2::render::Canvas;
 use sdl2::video::Window;
-use sdl2::Sdl;
 
 pub const GBA_SCREEN_WIDTH: u32 = 240;
 pub const GBA_SCREEN_HEIGHT: u32 = 160;
 const SCALE_FACTOR: u32 = 3;
 
 pub struct Display {
-    sdl_context: Sdl,
     canvas: Canvas<Window>,
 }
 
@@ -34,10 +30,7 @@ impl Display {
         canvas.clear();
         canvas.present();
 
-        Self {
-            sdl_context,
-            canvas,
-        }
+        Self { canvas }
     }
 
     pub fn update(&mut self, frame: &Vec<u8>) {
@@ -60,18 +53,6 @@ impl Display {
         let _ = self.canvas.copy(&texture, None, None);
 
         self.canvas.present();
-
-        let mut event_pump = self.sdl_context.event_pump().unwrap();
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => std::process::exit(0),
-                _ => {}
-            }
-        }
     }
 
     pub fn clear(&mut self, color: u32) {
