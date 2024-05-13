@@ -2,6 +2,7 @@ mod arm_instructions;
 mod cpu_test;
 mod instruction;
 mod register_file;
+mod thumb_instructions;
 
 use crate::arm7_tdmi::instruction::{
     decode_arm, decode_thumb, ArmInstructionType, ThumbInstructionType,
@@ -84,12 +85,12 @@ impl ARM7TDMI {
     pub fn step(&mut self, rsp: MemoryResponse) -> MemoryRequest {
         let thumb_mode_active = self.rf.get_cpsr().is_bit_set(5);
 
-        // println!(
-        //     "Executing {:#010x} from address {:#010x}; thumb mode: {:?}",
-        //     self.arm_current_execute,
-        //     self.rf.get_register(15, 0),
-        //     thumb_mode_active
-        // );
+        println!(
+            "Executing {:#010x} from address {:#010x}; thumb mode: {:?}",
+            self.arm_current_execute,
+            self.rf.get_register(15, 0),
+            thumb_mode_active
+        );
 
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
@@ -185,25 +186,27 @@ impl ARM7TDMI {
             }
         } else {
             match decode_thumb(self.arm_current_execute) {
-                ThumbInstructionType::MoveShiftedRegister => todo!(),
-                ThumbInstructionType::AddSubtract => todo!(),
-                ThumbInstructionType::AluImmediate => todo!(),
-                ThumbInstructionType::Alu => todo!(),
-                ThumbInstructionType::HiRegisterBx => todo!(),
-                ThumbInstructionType::PcRelativeLoad => todo!(),
-                ThumbInstructionType::LoadStoreRegOffset => todo!(),
-                ThumbInstructionType::LoadStoreSignExt => todo!(),
-                ThumbInstructionType::LoadStoreImmOffset => todo!(),
-                ThumbInstructionType::LoadStoreHalfWord => todo!(),
-                ThumbInstructionType::SpRelativeLoadStore => todo!(),
-                ThumbInstructionType::LoadAddress => todo!(),
-                ThumbInstructionType::AddOffsetToSp => todo!(),
-                ThumbInstructionType::PushPopRegister => todo!(),
-                ThumbInstructionType::MultipleLoadStore => todo!(),
-                ThumbInstructionType::ConditionalBranch => todo!(),
-                ThumbInstructionType::SoftwareInterrupt => todo!(),
-                ThumbInstructionType::UncoditionalBranch => todo!(),
-                ThumbInstructionType::LongBranchWithLink => todo!(),
+                ThumbInstructionType::MoveShiftedRegister => self.thumb_move_shifter_register(),
+                ThumbInstructionType::AddSubtract => self.thumb_add_subtract(),
+                ThumbInstructionType::AluImmediate => self.thumb_alu_immediate(),
+                ThumbInstructionType::Alu => self.thumb_alu(),
+                ThumbInstructionType::HiRegisterBx => {
+                    self.thumb_hi_register_bx(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::PcRelativeLoad => self.thumb_pc_relative_load(),
+                ThumbInstructionType::LoadStoreRegOffset => self.thumb_load_store_reg_offset(),
+                ThumbInstructionType::LoadStoreSignExt => self.thumb_load_store_sign_ext(),
+                ThumbInstructionType::LoadStoreImmOffset => self.thumb_load_store_imm_offset(),
+                ThumbInstructionType::LoadStoreHalfWord => self.thumb_load_store_halfword(),
+                ThumbInstructionType::SpRelativeLoadStore => self.thumb_sp_relative_load_store(),
+                ThumbInstructionType::LoadAddress => self.thumb_load_address(),
+                ThumbInstructionType::AddOffsetToSp => self.thumb_add_offset_to_sp(),
+                ThumbInstructionType::PushPopRegister => self.thumb_push_pop_register(),
+                ThumbInstructionType::MultipleLoadStore => self.thumb_multiple_load_store(),
+                ThumbInstructionType::ConditionalBranch => self.thumb_conditional_branch(),
+                ThumbInstructionType::SoftwareInterrupt => self.thumb_software_interrupt(),
+                ThumbInstructionType::UncoditionalBranch => self.thumb_unconditional_branch(),
+                ThumbInstructionType::LongBranchWithLink => self.thumb_long_branch_with_link(),
             }
         }
 

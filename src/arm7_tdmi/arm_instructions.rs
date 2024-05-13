@@ -76,7 +76,7 @@ impl ARM7TDMI {
                     shift_type,
                     shift_amount,
                     self.rf.is_flag_set(&ConditionCodeFlag::C),
-                    true,
+                    r_flag == 1,
                 );
             }
 
@@ -133,7 +133,11 @@ impl ARM7TDMI {
 
     /// arm7_tdmi::arm_branch_and_exchange
     ///
-    /// TBD
+    /// function to handle the BX instruction in order to branch and possibly switch mode
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn arm_branch_and_exchange(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let condition = self.arm_current_execute.get_range(31, 28);
         let rn = self.arm_current_execute.get_range(3, 0);
@@ -147,8 +151,6 @@ impl ARM7TDMI {
 
         if self.instruction_step == InstructionStep::STEP0 {
             self.arm_instruction_queue.clear();
-            self.data_is_fetch = false;
-
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
             self.data_is_fetch = false;
             self.instruction_step = InstructionStep::STEP1;
