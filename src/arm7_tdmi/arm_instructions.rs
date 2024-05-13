@@ -76,6 +76,7 @@ impl ARM7TDMI {
                     shift_type,
                     shift_amount,
                     self.rf.is_flag_set(&ConditionCodeFlag::C),
+                    true,
                 );
             }
 
@@ -312,6 +313,7 @@ impl ARM7TDMI {
                     shift_type,
                     shift_amount,
                     self.rf.is_flag_set(&ConditionCodeFlag::C),
+                    true,
                 );
             }
 
@@ -975,7 +977,7 @@ impl ARM7TDMI {
                     // signed long multiplication and add
                     } else if opcode == 7 {
                         ((op_s as i32 as i64) * (op_m as i32 as i64)
-                            + ((op_n as u64 | (op_d as u64) << 32) as i32 as i64))
+                            + ((op_n as u64 | ((op_d as u64) << 32)) as i64))
                             as u64
                     } else {
                         panic!("Opcode cannot be used in MUL")

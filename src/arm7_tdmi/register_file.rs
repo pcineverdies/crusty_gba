@@ -365,11 +365,11 @@ impl RegisterFile {
             0b0110 => self.is_flag_set(&V),
             0b0111 => !self.is_flag_set(&V),
             0b1000 => self.is_flag_set(&C) && !self.is_flag_set(&Z),
-            0b1001 => !self.is_flag_set(&C) && self.is_flag_set(&Z),
+            0b1001 => !self.is_flag_set(&C) || self.is_flag_set(&Z),
             0b1010 => self.is_flag_set(&N) == self.is_flag_set(&V),
             0b1011 => self.is_flag_set(&N) != self.is_flag_set(&V),
             0b1100 => !self.is_flag_set(&Z) && (self.is_flag_set(&N) == self.is_flag_set(&V)),
-            0b1101 => self.is_flag_set(&Z) && (self.is_flag_set(&N) != self.is_flag_set(&V)),
+            0b1101 => self.is_flag_set(&Z) || (self.is_flag_set(&N) != self.is_flag_set(&V)),
             0b1110 => true,
             0b1111 => true, // Undefined behaviour
             _ => {

@@ -66,15 +66,15 @@ impl Gpu {
                 self.display_array[(pixel_index * 4 + 0) as usize] = 0xff;
             } else if dispcnt.get_range(2, 0) == 4 {
                 let init_address = if dispcnt.is_bit_set(4) {
-                    0x06000000
-                } else {
                     0x0600a000
+                } else {
+                    0x06000000
                 };
 
                 let palette_color_address = self.vram.read_byte(init_address | pixel_index);
                 let pixel = self
                     .palette_ram
-                    .read_halfword(0x05000000 | palette_color_address);
+                    .read_halfword(0x05000000 | palette_color_address << 1);
                 self.display_array[(pixel_index * 4 + 3) as usize] =
                     pixel.get_range(4, 0) as u8 * 8;
                 self.display_array[(pixel_index * 4 + 2) as usize] =

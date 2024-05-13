@@ -20,7 +20,7 @@ pub const NOP: u32 = 0xE1A00000_u32;
 /// instruction is thus implemented using an FSM handling the different states using a variable of
 /// this type.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum InstructionStep {
+pub enum InstructionStep {
     STEP0,
     STEP1,
     STEP2,
@@ -48,14 +48,14 @@ pub enum OperatingMode {
 ///
 /// structure to represent the arm cpu
 pub struct ARM7TDMI {
-    pub rf: register_file::RegisterFile,  // Register File
-    arm_instruction_queue: VecDeque<u32>, // Instruction queue
-    pub arm_current_execute: u32,         // Current executed instruction
-    instruction_step: InstructionStep,    // Current instructions stpe for FSM handling
-    data_is_fetch: bool,                  // Is next data a fetch?
-    last_used_address: u32,               // Store the last address sent on the bus
-    instruction_counter_step: u32,        // For instructions which require many iterations
-    list_transfer_op: Vec<(u32, u32)>,    // List of operations to perform for ldm and stm
+    pub rf: register_file::RegisterFile,   // Register File
+    arm_instruction_queue: VecDeque<u32>,  // Instruction queue
+    pub arm_current_execute: u32,          // Current executed instruction
+    pub instruction_step: InstructionStep, // Current instructions stpe for FSM handling
+    data_is_fetch: bool,                   // Is next data a fetch?
+    last_used_address: u32,                // Store the last address sent on the bus
+    instruction_counter_step: u32,         // For instructions which require many iterations
+    list_transfer_op: Vec<(u32, u32)>,     // List of operations to perform for ldm and stm
 }
 
 impl ARM7TDMI {
@@ -84,12 +84,12 @@ impl ARM7TDMI {
     pub fn step(&mut self, rsp: MemoryResponse) -> MemoryRequest {
         let thumb_mode_active = self.rf.get_cpsr().is_bit_set(5);
 
-        println!(
-            "Executing {:#010x} from address {:#010x}; thumb mode: {:?}",
-            self.arm_current_execute,
-            self.rf.get_register(15, 0),
-            thumb_mode_active
-        );
+        // println!(
+        //     "Executing {:#010x} from address {:#010x}; thumb mode: {:?}",
+        //     self.arm_current_execute,
+        //     self.rf.get_register(15, 0),
+        //     thumb_mode_active
+        // );
 
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
@@ -223,7 +223,6 @@ impl ARM7TDMI {
 
         // Always remember the address which was used in the last bus transaction. This is useful
         // for the execution of many instructions handling memory.
-        println!("Asking for {:#010x}", next_request.address);
         self.last_used_address = next_request.address;
         next_request
     }

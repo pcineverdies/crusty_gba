@@ -241,6 +241,7 @@ pub fn decode_arm(data: u32) -> ArmInstructionType {
 /// @param shift_type [u32]: what kind of shift to use (must be in range 0..3)
 /// @param shift_amound [u32]: how much to shift
 /// @param old_c [bool]: current value of the c_flag
+/// @param is_register [bool]: the input of the barrel shifter comes from a register
 /// @return [u32]: shifted operand
 /// @return [bool]: in case of a logical alu operation, this tells whether the carry flag should be
 /// set or not.
@@ -251,6 +252,7 @@ pub fn barrel_shifter(
     shift_type: u32,
     shift_amount: u32,
     old_c: bool,
+    is_register: bool,
 ) -> (u32, bool, bool) {
     // Results to use
     let mut there_is_shift = true;
@@ -283,8 +285,12 @@ pub fn barrel_shifter(
 
         // Logical shift right
         Some(ArmAluShiftCodes::LSR) => {
-            // equivalent 0 and 32: result is 0, carry is the msb
-            if shift_amount == 0 || shift_amount == 32 {
+            // if shift_amount is 0, identical to LSL #0
+            if shift_amount == 0 {
+                there_is_shift = false;
+
+            // shift amount is 32: result is 0, carry is the msb
+            } else if shift_amount == 32 {
                 carry = operand.is_bit_set(31);
                 result = 0;
 
@@ -302,9 +308,11 @@ pub fn barrel_shifter(
 
         // Arithmetic shift right (shifted bits are filled with msb of operand)
         Some(ArmAluShiftCodes::ASR) => {
-            // Case of shift_amount 0 or >= 31: result is related to the msb, which is also the
+            if shift_amount == 0 {
+                there_is_shift = false
+            // >= 32: result is related to the msb, which is also the
             // carry
-            if shift_amount == 0 || shift_amount >= 32 {
+            } else if shift_amount >= 32 {
                 carry = operand.is_bit_set(31);
                 result = if carry { 0xFFFFFFFF } else { 0 };
             } else {
@@ -316,12 +324,16 @@ pub fn barrel_shifter(
             // Special ROR operation (RORX), in which the rotation is by 1 and the shifted bit is
             // the old carry of the system.
             if shift_amount == 0 {
-                carry = operand.is_bit_set(0);
-                result = operand.rotate_right(1);
-                if old_c {
-                    result.set_bit(31);
+                if is_register {
+                    there_is_shift = false;
                 } else {
-                    result.clear_bit(31);
+                    carry = operand.is_bit_set(0);
+                    result = operand.rotate_right(1);
+                    if old_c {
+                        result.set_bit(31);
+                    } else {
+                        result.clear_bit(31);
+                    }
                 }
 
             // Only the 5 msbs of shift_amount are used in this case
@@ -364,50 +376,37 @@ impl ARM7TDMI {
         let (alu_result, v_output, c_output);
         let (op1, op2, c_in);
 
+        c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
+        op1 = (operand1 as i32) as i64;
+        op2 = (operand2 as i32) as i64;
+
         if opcode == SUB || opcode == CMP {
-            op1 = (operand1 as i32) as i64;
-            op2 = (operand2 as i32) as i64;
             alu_result = op1 - op2;
-            v_output =
-                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+            v_output = ((operand1 ^ operand2) & (!operand2 ^ alu_result as u32)).is_bit_set(31);
+            c_output = (op2 as u32) <= (op1 as u32);
         } else if opcode == RSB {
-            op1 = (operand2 as i32) as i64;
-            op2 = (operand1 as i32) as i64;
-            alu_result = op1 - op2;
-            v_output =
-                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+            alu_result = op2 - op1;
+            v_output = ((operand2 ^ operand1) & (!operand1 ^ alu_result as u32)).is_bit_set(31);
+            c_output = (op1 as u32) <= (op2 as u32);
         } else if opcode == ADD || opcode == CMN {
-            op1 = (operand2 as i32) as i64;
-            op2 = (operand1 as i32) as i64;
             alu_result = op1 + op2;
-            v_output =
-                (op1 >= 0 && op2 >= 0 && alu_result < 0) || (op1 < 0 && op2 < 0 && alu_result >= 0);
+            v_output = ((operand2 ^ !operand1) & (operand1 ^ alu_result as u32)).is_bit_set(31);
+            c_output = (operand1 as u64) + (operand2 as u64) > 0xffff_ffff;
         } else if opcode == ADC {
-            op1 = (operand2 as i32) as i64;
-            op2 = (operand1 as i32) as i64;
-            c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
             alu_result = op1 + op2 + c_in;
-            v_output =
-                (op1 >= 0 && op2 >= 0 && alu_result < 0) || (op1 < 0 && op2 < 0 && alu_result >= 0);
+            v_output = ((operand2 ^ !operand1) & (operand1 ^ alu_result as u32)).is_bit_set(31);
+            c_output = (operand1 as u64) + (operand2 as u64) + (c_in as u64) > 0xffff_ffff;
         } else if opcode == SBC {
-            op1 = (operand2 as i32) as i64;
-            op2 = (operand1 as i32) as i64;
-            c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
             alu_result = op1 - op2 + c_in - 1;
-            v_output =
-                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+            v_output = ((operand1 ^ operand2) & (!operand2 ^ alu_result as u32)).is_bit_set(31);
+            c_output = (operand2 as u64 + 1 - c_in as u64) < (operand1 as u64);
         } else if opcode == RSC {
-            op1 = (operand2 as i32) as i64;
-            op2 = (operand1 as i32) as i64;
-            c_in = (if self.rf.is_flag_set(&C) { 1 } else { 0 }) as i64;
             alu_result = op2 - op1 + c_in - 1;
-            v_output =
-                (op1 >= 0 && op2 < 0 && alu_result < 0) || (op1 < 0 && op2 >= 0 && alu_result >= 0);
+            c_output = (operand1 as u64 + 1 - c_in as u64) < (operand2 as u64);
+            v_output = ((operand2 ^ operand1) & (!operand1 ^ alu_result as u32)).is_bit_set(31);
         } else {
             panic!("Wrong argument `opcode` for alu")
         }
-
-        c_output = (alu_result as u64).is_bit_set(32);
 
         let alu_result = (alu_result as u64).get_range(31, 0) as u32;
         return (alu_result, c_output, v_output);
