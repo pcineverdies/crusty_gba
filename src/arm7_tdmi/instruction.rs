@@ -286,11 +286,11 @@ pub fn barrel_shifter(
         // Logical shift right
         Some(ArmAluShiftCodes::LSR) => {
             // if shift_amount is 0, identical to LSL #0
-            if shift_amount == 0 {
+            if shift_amount == 0 && is_register {
                 there_is_shift = false;
 
             // shift amount is 32: result is 0, carry is the msb
-            } else if shift_amount == 32 {
+            } else if shift_amount == 32 || (shift_amount == 0 && !is_register) {
                 carry = operand.is_bit_set(31);
                 result = 0;
 
@@ -308,11 +308,11 @@ pub fn barrel_shifter(
 
         // Arithmetic shift right (shifted bits are filled with msb of operand)
         Some(ArmAluShiftCodes::ASR) => {
-            if shift_amount == 0 {
+            if shift_amount == 0 && is_register {
                 there_is_shift = false
             // >= 32: result is related to the msb, which is also the
             // carry
-            } else if shift_amount >= 32 {
+            } else if shift_amount >= 32 || (shift_amount == 0 && !is_register) {
                 carry = operand.is_bit_set(31);
                 result = if carry { 0xFFFFFFFF } else { 0 };
             } else {
@@ -321,18 +321,18 @@ pub fn barrel_shifter(
             }
         }
         Some(ArmAluShiftCodes::ROR) => {
-            // Special ROR operation (RORX), in which the rotation is by 1 and the shifted bit is
+            // Special ROR operation (RRX), in which the rotation is by 1 and the shifted bit is
             // the old carry of the system.
             if shift_amount == 0 {
                 if is_register {
                     there_is_shift = false;
                 } else {
                     carry = operand.is_bit_set(0);
-                    result = operand.rotate_right(1);
+                    result = operand >> 1;
                     if old_c {
-                        result.set_bit(31);
+                        result = result.set_bit(31);
                     } else {
-                        result.clear_bit(31);
+                        result = result.clear_bit(31);
                     }
                 }
 
@@ -399,10 +399,10 @@ impl ARM7TDMI {
         } else if opcode == SBC {
             alu_result = op1 - op2 + c_in - 1;
             v_output = ((operand1 ^ operand2) & (!operand2 ^ alu_result as u32)).is_bit_set(31);
-            c_output = (operand2 as u64 + 1 - c_in as u64) < (operand1 as u64);
+            c_output = (operand2 as u64 + 1 - c_in as u64) <= (operand1 as u64);
         } else if opcode == RSC {
             alu_result = op2 - op1 + c_in - 1;
-            c_output = (operand1 as u64 + 1 - c_in as u64) < (operand2 as u64);
+            c_output = (operand1 as u64 + 1 - c_in as u64) <= (operand2 as u64);
             v_output = ((operand2 ^ operand1) & (!operand1 ^ alu_result as u32)).is_bit_set(31);
         } else {
             panic!("Wrong argument `opcode` for alu")

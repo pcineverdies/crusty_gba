@@ -16,14 +16,14 @@ impl ARM7TDMI {
     pub fn arm_data_processing(&mut self, req: &mut MemoryRequest) {
         // Destination address
         let rd = self.arm_current_execute.get_range(15, 12);
+        // 1 if flags should be updated
+        let s_flag = self.arm_current_execute.get_range(20, 20);
+        // Opcode of the alu instruction
+        let opcode = ArmAluOpcode::from_value(self.arm_current_execute.get_range(24, 21));
 
         if self.instruction_step == InstructionStep::STEP0 {
             // === Decode instruction ===
 
-            // Opcode of the alu instruction
-            let opcode = ArmAluOpcode::from_value(self.arm_current_execute.get_range(24, 21));
-            // 1 if flags should be updated
-            let s_flag = self.arm_current_execute.get_range(20, 20);
             // 1 if the operand to use is an immediate encoded in the msbs of the instruction
             let i_flag = self.arm_current_execute.get_range(25, 25);
             // Condition to be checked, otherwise instruction is skipped
@@ -45,7 +45,7 @@ impl ARM7TDMI {
             // Immediate value
             let nn = self.arm_current_execute.get_range(7, 0);
 
-            let mut carry_shifter = self.rf.is_flag_set(&ConditionCodeFlag::C);
+            let carry_shifter;
             let mut operand1 = self.rf.get_register(rn, 8);
             let mut operand2 = self.rf.get_register(rm, 8);
             let mut there_is_shift = false;
@@ -54,8 +54,13 @@ impl ARM7TDMI {
                 return;
             }
 
-            // operand1 is rn, operand 2 is nn << (2 * is)
+            // operand1 is rn, operand 2 is nn.ROR(2 * is)
             if i_flag == 1 {
+                if is == 0 {
+                    carry_shifter = self.rf.is_flag_set(&ConditionCodeFlag::C);
+                } else {
+                    carry_shifter = nn.is_bit_set(is * 2 - 1);
+                }
                 operand2 = nn.rotate_right(is * 2);
 
             // operand 1 is rn, operand 2 can be either `rm OP rs` or `rm op imm`
@@ -102,7 +107,7 @@ impl ARM7TDMI {
                 self.instruction_step = InstructionStep::STEP1;
 
             // If rd == 15, 2 more extra cycles to refill the pipeline
-            } else if rd == 15 {
+            } else if rd == 15 && !ArmAluOpcode::is_test_opcode(opcode) {
                 self.arm_instruction_queue.clear();
                 req.bus_cycle = BusCycle::NONSEQUENTIAL;
                 self.data_is_fetch = false;
@@ -110,7 +115,8 @@ impl ARM7TDMI {
             }
         } else if self.instruction_step == InstructionStep::STEP1 {
             // If rd == 15, 2 more extra cycles to refill the pipeline
-            if rd == 15 {
+            if rd == 15 && !ArmAluOpcode::is_test_opcode(opcode) {
+                self.arm_instruction_queue.clear();
                 self.arm_instruction_queue.clear();
                 req.bus_cycle = BusCycle::NONSEQUENTIAL;
                 self.data_is_fetch = false;
@@ -122,6 +128,10 @@ impl ARM7TDMI {
             req.address = self.rf.get_register(15, 0);
             self.instruction_step = InstructionStep::STEP3;
         } else if self.instruction_step == InstructionStep::STEP3 {
+            if s_flag == 1 {
+                let current_spsr = self.rf.get_spsr();
+                let _ = self.rf.write_cpsr(current_spsr);
+            }
             req.address = self.rf.get_register(15, 4);
             self.rf
                 .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
@@ -315,7 +325,7 @@ impl ARM7TDMI {
                     shift_type,
                     shift_amount,
                     self.rf.is_flag_set(&ConditionCodeFlag::C),
-                    true,
+                    false,
                 );
             }
 
@@ -393,7 +403,6 @@ impl ARM7TDMI {
                 self.rf
                     .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
                 self.instruction_step = InstructionStep::STEP0;
-            } else if self.instruction_step == InstructionStep::STEP4 {
             } else {
                 panic!("Wrong step for instructin type ARM_LOAD");
             }
@@ -487,7 +496,7 @@ impl ARM7TDMI {
                 address_to_write
             } else {
                 address_to_mem
-            }
+            };
         }
 
         // Load instruction
@@ -523,11 +532,27 @@ impl ARM7TDMI {
                     // If we are requiring the upper halfword of a word-aligned address, then get
                     // the 16 msbs. Otherwise the 16 lsbs. Since the address used is always (?) a
                     // multiple of 2, then offset is either 2 or 0.
-                    data_to_write = data_to_write.get_range(15 + 8 * offset, 8 * offset);
+                    data_to_write = if offset < 2 {
+                        data_to_write.get_range(15, 0)
+                    } else {
+                        data_to_write.get_range(31, 16)
+                    };
+
+                    if offset % 2 == 1 {
+                        data_to_write = data_to_write.rotate_right(8);
+                    }
 
                     // ldrsh -> load signed halfword, sign extend the data to use
+                    // if it was misaligned, it reads a byte from misaligned address and extends it
+                    // (don't ask too many questions)
                     if opcode == 0b11 {
-                        data_to_write = ((data_to_write as i16) as i32) as u32;
+                        if offset % 2 == 1 {
+                            data_to_write = rsp.data.get_range(offset * 8 + 7, offset * 8);
+                            data_to_write = ((data_to_write as i8) as i32) as u32;
+                        }
+                        else{
+                            data_to_write = ((data_to_write as i16) as i32) as u32;
+                        }
                     }
                 }
 
@@ -562,16 +587,17 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP1;
                 } else if self.instruction_step == InstructionStep::STEP1 {
-                    // Post increment of the base register
-                    if p_flag == 0 || w_flag == 1 {
-                        self.rf.write_register(rn, address_to_write);
-                    }
 
                     req.mas = TransferSize::HALFWORD;
 
                     // get the data
                     req.data = self.rf.get_register(rd, 12);
                     req.data = (req.data & 0xffff) | (req.data << 16);
+
+                    // Post increment of the base register
+                    if p_flag == 0 || w_flag == 1 {
+                        self.rf.write_register(rn, address_to_write);
+                    }
 
                     req.nr_w = BusSignal::HIGH;
                     self.instruction_step = InstructionStep::STEP0;
@@ -870,22 +896,23 @@ impl ARM7TDMI {
 
             req.address = self.rf.get_register(rn, 0);
             if b_flag == 0 {
-                // Write the response back to the destination register
-                self.rf.write_register(rd, rsp.data);
-                // The new writing size is a word
-                req.mas = TransferSize::WORD;
                 // Write the new data to be used
                 req.data = self.rf.get_register(rm, 0);
+                // Write the response back to the destination register
+                let data_to_write = rsp.data.rotate_right(8 * (self.last_used_address % 4));
+                self.rf.write_register(rd, data_to_write);
+                // The new writing size is a word
+                req.mas = TransferSize::WORD;
             } else {
+                // Get the data and move it 4 times to the 32 available bits
+                req.data = self.rf.get_register(rm, 0).get_range(7, 0);
+                req.data = req.data | (req.data << 8) | (req.data << 16) | (req.data << 24);
                 // Get the byte to be written back to the register
                 let mut data_to_write = rsp.data;
                 data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
                 self.rf.write_register(rd, data_to_write);
                 // The new writing size is byte
                 req.mas = TransferSize::BYTE;
-                // Get the data and move it 4 times to the 32 available bits
-                req.data = self.rf.get_register(rm, 0).get_range(7, 0);
-                req.data = req.data | (req.data << 8) | (req.data << 16) | (req.data << 24);
             };
             // Writing operation with lock bit high
             req.nr_w = BusSignal::HIGH;
@@ -1021,6 +1048,7 @@ impl ARM7TDMI {
         let rn = self.arm_current_execute.get_range(19, 16);
         let mut r_list = self.arm_current_execute.get_range(15, 0);
         let mut was_list_empy = false;
+        let is_rn_in_list = (r_list & 1 << rn) != 0;
 
         if !self.rf.check_condition_code(condition) {
             return;
@@ -1053,6 +1081,8 @@ impl ARM7TDMI {
 
             // Initial address
             let mut address_to_use = self.rf.get_register(rn, 0);
+            println!("rn : {:?}", rn);
+            println!("Address to use is {:#010X}", address_to_use);
 
             // Find the smallest address involved in the process:
             // u == 0, p == 0: post decrement
@@ -1083,6 +1113,8 @@ impl ARM7TDMI {
                 self.list_transfer_op
                     .push((address_to_use, register_counter));
 
+                println!("added {:#010X} for address {:#010X}", register_counter, address_to_use);
+
                 address_to_use = address_to_use.wrapping_add(4);
                 register_counter += 1;
             }
@@ -1102,7 +1134,7 @@ impl ARM7TDMI {
                     self.list_transfer_op[self.instruction_counter_step as usize].1;
 
                 // pre incremnt (this is important in case the base register is also in the list)
-                if p_flag == 1 {
+                if p_flag == 1 && !(register_to_use == rn && self.instruction_counter_step == 0){
                     self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
                 }
 
@@ -1119,7 +1151,7 @@ impl ARM7TDMI {
                 };
 
                 // Post increment
-                if p_flag == 0 {
+                if p_flag == 0 || (register_to_use == rn && self.instruction_counter_step == 0){
                     self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
                 }
 
@@ -1131,6 +1163,8 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP0;
                 }
+
+                println!("STM: writing {:#010X} into {:#010x}", req.data, req.address);
             } else {
                 panic!("Wrong step for STM instruction");
             }
@@ -1156,11 +1190,14 @@ impl ARM7TDMI {
             } else if self.instruction_step == InstructionStep::STEP2 {
                 self.data_is_fetch = false;
 
-                self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
+                // writeback only if rn is in not list
+                if !is_rn_in_list {
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
+                }
 
                 // Use the normal registers if s_flag and r15 is in the list of registers to load:
                 // move the response from the memory into the register
-                if s_flag == 1 && r_list.is_bit_set(15) {
+                if s_flag == 0 || r_list.is_bit_set(15) {
                     self.rf.write_register(
                         self.list_transfer_op[(self.instruction_counter_step - 1) as usize].1,
                         rsp.data,
@@ -1173,12 +1210,16 @@ impl ARM7TDMI {
                     );
                 }
 
+                println!("LDM: reading {:#010X} from {:#010x}", rsp.data, self.last_used_address);
                 // In case all the registers have been moved, either we fetch the pipeline or we
                 // stop
                 if items_to_handle == self.instruction_counter_step {
                     if r_list.is_bit_set(15) {
-                        req.bus_cycle = BusCycle::INTERNAL;
+                        let current_spsr = self.rf.get_spsr();
+                        let _ = self.rf.write_cpsr(current_spsr);
                         self.arm_instruction_queue.clear();
+                        req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                        self.data_is_fetch = false;
                         self.instruction_step = InstructionStep::STEP3;
                     } else {
                         self.instruction_step = InstructionStep::STEP0;

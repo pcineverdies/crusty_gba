@@ -36,8 +36,8 @@ pub enum InstructionStep {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u32)]
 pub enum OperatingMode {
-    SYSTEM = 0b10000,
-    USER = 0b11111,
+    SYSTEM = 0b11111,
+    USER = 0b10000,
     FIQ = 0b10001,
     IRQ = 0b10010,
     SUPERVISOR = 0b10011,
@@ -84,13 +84,6 @@ impl ARM7TDMI {
     /// @return [MemoryRequest]: request from the cpu towards the bus.
     pub fn step(&mut self, rsp: MemoryResponse) -> MemoryRequest {
         let thumb_mode_active = self.rf.get_cpsr().is_bit_set(5);
-
-        println!(
-            "Executing {:#010x} from address {:#010x}; thumb mode: {:?}",
-            self.arm_current_execute,
-            self.rf.get_register(15, 0),
-            thumb_mode_active
-        );
 
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
