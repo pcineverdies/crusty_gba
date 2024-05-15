@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 
 /// Definition of a NOP instruction used to initialize the CPU
 pub const NOP: u32 = 0xE1A00000_u32;
+pub const NOP_THUMB: u32 = 0x000046c0_u32;
 
 /// arm7_tdmi::InstructionStep
 ///
@@ -182,7 +183,7 @@ impl ARM7TDMI {
                 ThumbInstructionType::MoveShiftedRegister => self.thumb_move_shifter_register(),
                 ThumbInstructionType::AddSubtract => self.thumb_add_subtract(),
                 ThumbInstructionType::AluImmediate => self.thumb_alu_immediate(),
-                ThumbInstructionType::Alu => self.thumb_alu(),
+                ThumbInstructionType::Alu => self.thumb_alu(&mut next_request),
                 ThumbInstructionType::HiRegisterBx => {
                     self.thumb_hi_register_bx(&mut next_request, &rsp)
                 }

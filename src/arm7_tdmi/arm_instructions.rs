@@ -549,8 +549,7 @@ impl ARM7TDMI {
                         if offset % 2 == 1 {
                             data_to_write = rsp.data.get_range(offset * 8 + 7, offset * 8);
                             data_to_write = ((data_to_write as i8) as i32) as u32;
-                        }
-                        else{
+                        } else {
                             data_to_write = ((data_to_write as i16) as i32) as u32;
                         }
                     }
@@ -587,7 +586,6 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP1;
                 } else if self.instruction_step == InstructionStep::STEP1 {
-
                     req.mas = TransferSize::HALFWORD;
 
                     // get the data
@@ -1089,9 +1087,7 @@ impl ARM7TDMI {
             // u == 1, p == 1: pre increment
             if u_flag == 0 && p_flag == 0 {
                 if was_list_empy {
-                    address_to_use = address_to_use
-                        .wrapping_sub(0x10 * 4)
-                        .wrapping_add(4);
+                    address_to_use = address_to_use.wrapping_sub(0x10 * 4).wrapping_add(4);
                 } else {
                     address_to_use = address_to_use
                         .wrapping_sub(items_to_handle * 4)
@@ -1152,7 +1148,13 @@ impl ARM7TDMI {
                 };
 
                 if self.instruction_counter_step == 0 {
-                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, 4 * items_to_handle);
+                    self.modify_register_ldm_stm(
+                        was_list_empy,
+                        w_flag,
+                        u_flag,
+                        rn,
+                        4 * items_to_handle,
+                    );
                 }
 
                 // Next register to handle
@@ -1163,7 +1165,6 @@ impl ARM7TDMI {
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.instruction_step = InstructionStep::STEP0;
                 }
-
             } else {
                 panic!("Wrong step for STM instruction");
             }
@@ -1255,7 +1256,14 @@ impl ARM7TDMI {
     /// @param u_flag [u32]: direction flag
     /// @param rn [u32]: base register
     /// @param step [u32]: how much to modify
-    fn modify_register_ldm_stm(&mut self, was_list_empy: bool, w_flag: u32, u_flag: u32, rn: u32, step: u32) {
+    fn modify_register_ldm_stm(
+        &mut self,
+        was_list_empy: bool,
+        w_flag: u32,
+        u_flag: u32,
+        rn: u32,
+        step: u32,
+    ) {
         if !was_list_empy {
             if w_flag == 1 && u_flag == 0 {
                 self.rf

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod cpu_test {
 
-    use crate::arm7_tdmi::{OperatingMode, ARM7TDMI, NOP};
+    use crate::arm7_tdmi::{OperatingMode, ARM7TDMI, NOP, NOP_THUMB};
     use crate::bus::{BusSignal, MemoryResponse};
     use crate::common::BitOperation;
     use std::collections::HashMap;
@@ -463,5 +463,174 @@ mod cpu_test {
         }
 
         assert_eq!(cpu.arm_current_execute, 0x00001111);
+    }
+
+    #[test]
+    fn thumb_move_shifted_register() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x014a_21ff), // mov r1, 0xff  --  lsl r2, r1, 5
+            (0x00100004_u32, 0x114d_094b), // lsr r3, r1, 5 -- asr r5, r1, 5
+            (0x00100008_u32, 0x1237_060e), // lsl r6, r1, #24 -- asr r7, r6, #8
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE12FFF1A_u32), // bx 0x00100000
+            (0x08000010_u32, NOP),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..50 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(1, 0), 0xff);
+        assert_eq!(cpu.rf.get_register(2, 0), 0xff << 5);
+        assert_eq!(cpu.rf.get_register(3, 0), 0xff >> 5);
+        assert_eq!(cpu.rf.get_register(5, 0), 0xff >> 5);
+        assert_eq!(cpu.rf.get_register(6, 0), 0xff000000);
+        assert_eq!(cpu.rf.get_register(7, 0), 0xffff0000);
+    }
+
+    #[test]
+    fn thumb_add_subtract_test() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x22fe_21ff), // mov r1, 0xff  --  mov r2, 0xfe
+            (0x00100004_u32, 0x1a54_188b), // add r3, r1, r2 -- sub r4, r2, r1
+            (0x00100008_u32, 0x1e4e_1c4d), // add r5, r1, 1 -- sub r6, r1, 1
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE12FFF1A_u32), // bx 0x00100000
+            (0x08000010_u32, NOP),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..50 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(1, 0), 0xff);
+        assert_eq!(cpu.rf.get_register(2, 0), 0xfe);
+        assert_eq!(cpu.rf.get_register(3, 0), 0x1fd);
+        assert_eq!(cpu.rf.get_register(4, 0), 0xffffffff);
+        assert_eq!(cpu.rf.get_register(5, 0), 0x100);
+        assert_eq!(cpu.rf.get_register(6, 0), 0xfe);
+    }
+
+    #[test]
+    fn thumb_alu_1() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x21fe_20ff),
+            (0x00100004_u32, 0x22fe_4001),
+            (0x00100008_u32, 0x2003_4042),
+            (0x0010000c_u32, 0x4083_23ff),
+            (0x00100010_u32, 0x40c4_24ff),
+            (0x00100014_u32, 0x4105_25ff),
+            (0x00100018_u32, 0x4146_26ff),
+            (0x0010001c_u32, 0x4187_27ff),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE12FFF1A_u32), // bx 0x00100000
+            (0x08000010_u32, NOP),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..50 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(0, 0), 3);
+        assert_eq!(cpu.rf.get_register(1, 0), 0xff & 0xfe);
+        assert_eq!(cpu.rf.get_register(2, 0), 0xff ^ 0xfe);
+        assert_eq!(cpu.rf.get_register(3, 0), 0xff << 3);
+        assert_eq!(cpu.rf.get_register(4, 0), 0xff >> 3);
+        assert_eq!(cpu.rf.get_register(5, 0), 0xff >> 3);
+        assert_eq!(cpu.rf.get_register(6, 0), 0xff + 3);
+        assert_eq!(cpu.rf.get_register(7, 0), 0xff - 3 - 1);
+    }
+
+    #[test]
+    fn thumb_alu_2() {
+        let mut cpu = ARM7TDMI::new();
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x2003_2110),
+            (0x00100004_u32, 0x2201_41c1),
+            (0x00100008_u32, 0x428a_420a),
+            (0x0010000c_u32, 0x4253_42ca),
+            (0x00100010_u32, 0x4304_2408),
+            (0x00100014_u32, 0x4365_25ff),
+            (0x00100018_u32, 0x43e7_439e),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE12FFF1A_u32), // bx 0x00100000
+            (0x08000010_u32, NOP),
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..50 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(0, 0), 3);
+        assert_eq!(cpu.rf.get_register(1, 0), 2);
+        assert_eq!(cpu.rf.get_register(2, 0), 1);
+        assert_eq!(cpu.rf.get_register(3, 0), 0xffffffff);
+        assert_eq!(cpu.rf.get_register(4, 0), 11);
+        assert_eq!(cpu.rf.get_register(5, 0), 0xaf5);
+        assert_eq!(cpu.rf.get_register(6, 0), 0);
+        assert_eq!(cpu.rf.get_register(7, 0), !11_u32);
     }
 }
