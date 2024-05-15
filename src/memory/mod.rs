@@ -84,7 +84,11 @@ impl Memory {
         }
 
         if self.is_read_only {
-            panic!("Cannot write on read-only memory {}!", self.name);
+            println!(
+                "Cannot write on read-only memory {}! Address: {:#010X}; Data: {:#010X}",
+                self.name, address, data
+            );
+            return;
         }
 
         match mas {

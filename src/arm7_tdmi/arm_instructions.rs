@@ -1081,8 +1081,6 @@ impl ARM7TDMI {
 
             // Initial address
             let mut address_to_use = self.rf.get_register(rn, 0);
-            println!("rn : {:?}", rn);
-            println!("Address to use is {:#010X}", address_to_use);
 
             // Find the smallest address involved in the process:
             // u == 0, p == 0: post decrement
@@ -1090,11 +1088,21 @@ impl ARM7TDMI {
             // u == 1, p == 0: post increment
             // u == 1, p == 1: pre increment
             if u_flag == 0 && p_flag == 0 {
-                address_to_use = address_to_use
-                    .wrapping_sub(items_to_handle * 4)
-                    .wrapping_add(4);
+                if was_list_empy {
+                    address_to_use = address_to_use
+                        .wrapping_sub(0x10 * 4)
+                        .wrapping_add(4);
+                } else {
+                    address_to_use = address_to_use
+                        .wrapping_sub(items_to_handle * 4)
+                        .wrapping_add(4);
+                }
             } else if u_flag == 0 && p_flag == 1 {
-                address_to_use = address_to_use.wrapping_sub(items_to_handle * 4);
+                if was_list_empy {
+                    address_to_use = address_to_use.wrapping_sub(0x10 * 4);
+                } else {
+                    address_to_use = address_to_use.wrapping_sub(items_to_handle * 4);
+                }
             } else if u_flag == 1 && p_flag == 1 {
                 address_to_use = address_to_use.wrapping_add(4);
             }
@@ -1112,8 +1120,6 @@ impl ARM7TDMI {
                 // Push to the list the pair (address, register)
                 self.list_transfer_op
                     .push((address_to_use, register_counter));
-
-                println!("added {:#010X} for address {:#010X}", register_counter, address_to_use);
 
                 address_to_use = address_to_use.wrapping_add(4);
                 register_counter += 1;
@@ -1133,11 +1139,6 @@ impl ARM7TDMI {
                 let register_to_use =
                     self.list_transfer_op[self.instruction_counter_step as usize].1;
 
-                // pre incremnt (this is important in case the base register is also in the list)
-                if p_flag == 1 && !(register_to_use == rn && self.instruction_counter_step == 0){
-                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
-                }
-
                 self.data_is_fetch = false;
                 req.bus_cycle = BusCycle::SEQUENTIAL;
                 req.address = self.list_transfer_op[self.instruction_counter_step as usize].0;
@@ -1150,9 +1151,8 @@ impl ARM7TDMI {
                     self.rf.get_register(register_to_use, 12)
                 };
 
-                // Post increment
-                if p_flag == 0 || (register_to_use == rn && self.instruction_counter_step == 0){
-                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
+                if self.instruction_counter_step == 0 {
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, 4 * items_to_handle);
                 }
 
                 // Next register to handle
@@ -1164,7 +1164,6 @@ impl ARM7TDMI {
                     self.instruction_step = InstructionStep::STEP0;
                 }
 
-                println!("STM: writing {:#010X} into {:#010x}", req.data, req.address);
             } else {
                 panic!("Wrong step for STM instruction");
             }
@@ -1192,7 +1191,7 @@ impl ARM7TDMI {
 
                 // writeback only if rn is in not list
                 if !is_rn_in_list {
-                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn);
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, 4);
                 }
 
                 // Use the normal registers if s_flag and r15 is in the list of registers to load:
@@ -1210,7 +1209,6 @@ impl ARM7TDMI {
                     );
                 }
 
-                println!("LDM: reading {:#010X} from {:#010x}", rsp.data, self.last_used_address);
                 // In case all the registers have been moved, either we fetch the pipeline or we
                 // stop
                 if items_to_handle == self.instruction_counter_step {
@@ -1256,14 +1254,15 @@ impl ARM7TDMI {
     /// @param w_flag [u32]: write back flag
     /// @param u_flag [u32]: direction flag
     /// @param rn [u32]: base register
-    fn modify_register_ldm_stm(&mut self, was_list_empy: bool, w_flag: u32, u_flag: u32, rn: u32) {
+    /// @param step [u32]: how much to modify
+    fn modify_register_ldm_stm(&mut self, was_list_empy: bool, w_flag: u32, u_flag: u32, rn: u32, step: u32) {
         if !was_list_empy {
             if w_flag == 1 && u_flag == 0 {
                 self.rf
-                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(4));
+                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_sub(step));
             } else if w_flag == 1 && u_flag == 1 {
                 self.rf
-                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(4));
+                    .write_register(rn, self.rf.get_register(rn, 0).wrapping_add(step));
             }
         } else {
             if w_flag == 1 && u_flag == 0 {
