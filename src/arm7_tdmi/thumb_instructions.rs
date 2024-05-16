@@ -2,7 +2,7 @@ use crate::arm7_tdmi::instruction::barrel_shifter;
 use crate::arm7_tdmi::instruction::ArmAluOpcode;
 use crate::arm7_tdmi::register_file::ConditionCodeFlag;
 use crate::arm7_tdmi::{InstructionStep, ARM7TDMI};
-use crate::bus::{BusCycle, MemoryRequest, MemoryResponse, TransferSize};
+use crate::bus::{BusCycle, BusSignal, MemoryRequest, MemoryResponse, TransferSize};
 use crate::common::BitOperation;
 
 impl ARM7TDMI {
@@ -104,10 +104,6 @@ impl ARM7TDMI {
         let mut c_flag = false;
         let mut v_flag = false;
         let mut instruction_type = ArmAluOpcode::MOV;
-
-        println!("-------------------------");
-        println!("Opcode : {}", opcode);
-        println!("step: {:?}", self.instruction_step);
 
         if self.instruction_step == InstructionStep::STEP0 {
             let mut ops = self.rf.get_register(rs, 0);
@@ -244,10 +240,6 @@ impl ARM7TDMI {
                 }
             }
 
-            println!("RS : {:#010X}", ops);
-            println!("RD : {:#010X}", opd);
-            println!("res : {:#010X}", alu_result);
-
             if ![0x8, 0xa, 0xb].contains(&opcode) {
                 self.rf.write_register(rd, alu_result);
             }
@@ -381,23 +373,343 @@ impl ARM7TDMI {
         }
     }
 
-    pub fn thumb_pc_relative_load(&self) {
-        todo!()
+    pub fn thumb_pc_relative_load(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let rd = self.arm_current_execute.get_range(10, 8);
+        let nn = self.arm_current_execute.get_range(7, 0);
+
+        if self.instruction_step == InstructionStep::STEP0 {
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.instruction_step = InstructionStep::STEP1;
+        } else if self.instruction_step == InstructionStep::STEP1 {
+            self.data_is_fetch = false;
+            req.bus_cycle = BusCycle::INTERNAL;
+            req.mas = TransferSize::WORD;
+            req.address = (self.rf.get_register(15, 4) & !2).wrapping_add(nn << 2);
+            self.instruction_step = InstructionStep::STEP2;
+        } else if self.instruction_step == InstructionStep::STEP2 {
+            let mut data_to_write = rsp.data;
+            let offset = self.last_used_address % 4;
+            data_to_write = data_to_write.rotate_right(offset * 8);
+
+            self.rf.write_register(rd, data_to_write);
+            self.data_is_fetch = false;
+
+            req.bus_cycle = BusCycle::SEQUENTIAL;
+            self.instruction_step = InstructionStep::STEP0;
+        } else {
+            panic!("Wrong instruction step for THUMB PC RELATIVE LOAD");
+        }
     }
-    pub fn thumb_load_store_reg_offset(&self) {
-        todo!()
+
+    pub fn thumb_load_store_reg_offset(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(11, 10);
+        let ro = self.arm_current_execute.get_range(8, 6);
+        let rb = self.arm_current_execute.get_range(5, 3);
+        let rd = self.arm_current_execute.get_range(2, 0);
+
+        // STR
+        if opcode < 2 {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                req.data = self.rf.get_register(rd, 0);
+                req.address = self
+                    .rf
+                    .get_register(rb, 0)
+                    .wrapping_add(self.rf.get_register(ro, 0));
+
+                // If only one byte is to be moved, copy the byte over all the 32 lines of the bus.
+                if opcode == 1 {
+                    let byte = req.data & 0xff;
+                    req.data = byte | (byte << 8) | (byte << 16) | (byte << 24);
+                    req.mas = TransferSize::BYTE;
+                } else {
+                    req.mas = TransferSize::WORD;
+                }
+
+                req.nr_w = BusSignal::HIGH;
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong instruction step for instruction THUMB STR");
+            }
+        // LDR
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::INTERNAL;
+                req.address = self
+                    .rf
+                    .get_register(rb, 0)
+                    .wrapping_add(self.rf.get_register(ro, 0));
+                if opcode == 3 {
+                    req.mas = TransferSize::BYTE;
+                } else {
+                    req.mas = TransferSize::WORD;
+                }
+                self.instruction_step = InstructionStep::STEP2;
+            } else if self.instruction_step == InstructionStep::STEP2 {
+                let mut data_to_write = rsp.data;
+                let offset = self.last_used_address % 4;
+
+                if opcode == 3 {
+                    data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
+                } else {
+                    data_to_write = data_to_write.rotate_right(offset * 8);
+                }
+
+                self.rf.write_register(rd, data_to_write);
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong instruction step for instruction THUMB STR");
+            }
+        }
     }
-    pub fn thumb_load_store_sign_ext(&self) {
-        todo!()
+
+    pub fn thumb_load_store_sign_ext(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(11, 10);
+        let ro = self.arm_current_execute.get_range(8, 6);
+        let rb = self.arm_current_execute.get_range(5, 3);
+        let rd = self.arm_current_execute.get_range(2, 0);
+        let offset = self.rf.get_register(ro, 0);
+
+        // STRH
+        if opcode == 0 {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                req.mas = TransferSize::HALFWORD;
+                self.data_is_fetch = false;
+                req.data = self.rf.get_register(rd, 12);
+                req.data = (req.data & 0xffff) | (req.data << 16);
+                req.address = self.rf.get_register(rb, 0).wrapping_add(offset);
+                req.nr_w = BusSignal::HIGH;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong step for instruction STRH THUMB")
+            }
+
+        // LDSB / LDRH / LDSH
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::INTERNAL;
+                req.address = self.rf.get_register(rb, 0).wrapping_add(offset);
+                req.mas = TransferSize::HALFWORD;
+                self.instruction_step = InstructionStep::STEP2;
+            } else if self.instruction_step == InstructionStep::STEP2 {
+                let mut data_to_write = rsp.data;
+                let offset = self.last_used_address % 4;
+
+                if opcode == 1 {
+                    data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
+                    data_to_write = ((data_to_write as i8) as i32) as u32;
+                } else {
+                    data_to_write = if offset < 2 {
+                        data_to_write.get_range(15, 0)
+                    } else {
+                        data_to_write.get_range(31, 16)
+                    };
+
+                    if offset % 2 == 1 {
+                        data_to_write = data_to_write.rotate_right(8);
+                    }
+
+                    if opcode == 3 {
+                        data_to_write = ((data_to_write as i16) as i32) as u32;
+                    }
+                }
+
+                // Update the destination register
+                self.rf.write_register(rd, data_to_write);
+                self.data_is_fetch = false;
+
+                req.bus_cycle = BusCycle::SEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong step for instruction STRH THUMB")
+            }
+        }
     }
-    pub fn thumb_load_store_imm_offset(&self) {
-        todo!()
+
+    pub fn thumb_load_store_imm_offset(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(12, 11);
+        let offset = if opcode > 1 {
+            self.arm_current_execute.get_range(10, 6)
+        } else {
+            self.arm_current_execute.get_range(10, 6) * 4
+        };
+        let rb = self.arm_current_execute.get_range(5, 3);
+        let rd = self.arm_current_execute.get_range(2, 0);
+
+        // STR
+        if opcode & 1 == 0 {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                req.data = self.rf.get_register(rd, 0);
+                req.address = self.rf.get_register(rb, 0).wrapping_add(offset);
+
+                // If only one byte is to be moved, copy the byte over all the 32 lines of the bus.
+                if opcode == 2 {
+                    let byte = req.data & 0xff;
+                    req.data = byte | (byte << 8) | (byte << 16) | (byte << 24);
+                    req.mas = TransferSize::BYTE;
+                } else {
+                    req.mas = TransferSize::WORD;
+                }
+
+                req.nr_w = BusSignal::HIGH;
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong instruction step for instruction THUMB STR");
+            }
+        // LDR
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::INTERNAL;
+                req.address = self.rf.get_register(rb, 0).wrapping_add(offset);
+                if opcode == 3 {
+                    req.mas = TransferSize::BYTE;
+                } else {
+                    req.mas = TransferSize::WORD;
+                }
+                self.instruction_step = InstructionStep::STEP2;
+            } else if self.instruction_step == InstructionStep::STEP2 {
+                let mut data_to_write = rsp.data;
+                let offset = self.last_used_address % 4;
+
+                if opcode == 3 {
+                    data_to_write = data_to_write.get_range(offset * 8 + 7, offset * 8);
+                } else {
+                    data_to_write = data_to_write.rotate_right(offset * 8);
+                }
+
+                self.rf.write_register(rd, data_to_write);
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong instruction step for instruction THUMB STR");
+            }
+        }
     }
-    pub fn thumb_load_store_halfword(&self) {
-        todo!()
+
+    pub fn thumb_load_store_halfword(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(11, 11);
+        let nn = self.arm_current_execute.get_range(10, 6) << 1;
+        let rb = self.arm_current_execute.get_range(5, 3);
+        let rd = self.arm_current_execute.get_range(2, 0);
+
+        // STRH
+        if opcode == 0 {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                req.mas = TransferSize::HALFWORD;
+                self.data_is_fetch = false;
+                req.data = self.rf.get_register(rd, 12);
+                req.data = (req.data & 0xffff) | (req.data << 16);
+                req.address = self.rf.get_register(rb, 0).wrapping_add(nn);
+                req.nr_w = BusSignal::HIGH;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong step for instruction STRH THUMB")
+            }
+        // LDRH
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::INTERNAL;
+                req.address = self.rf.get_register(rb, 0).wrapping_add(nn);
+                req.mas = TransferSize::HALFWORD;
+                self.instruction_step = InstructionStep::STEP2;
+            } else if self.instruction_step == InstructionStep::STEP2 {
+                let mut data_to_write = rsp.data;
+                let offset = self.last_used_address % 4;
+
+                data_to_write = if offset < 2 {
+                    data_to_write.get_range(15, 0)
+                } else {
+                    data_to_write.get_range(31, 16)
+                };
+
+                if offset % 2 == 1 {
+                    data_to_write = data_to_write.rotate_right(8);
+                }
+
+                // Update the destination register
+                self.rf.write_register(rd, data_to_write);
+                self.data_is_fetch = false;
+
+                req.bus_cycle = BusCycle::SEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong step for instruction STRH THUMB")
+            }
+        }
     }
-    pub fn thumb_sp_relative_load_store(&self) {
-        todo!()
+
+    pub fn thumb_sp_relative_load_store(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(11, 11);
+        let rd = self.arm_current_execute.get_range(10, 8);
+        let nn = self.arm_current_execute.get_range(7, 0);
+
+        // STR
+        if opcode == 0 {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                req.data = self.rf.get_register(rd, 0);
+                req.address = self.rf.get_register(13, 0).wrapping_add(nn << 2);
+                req.mas = TransferSize::WORD;
+                req.nr_w = BusSignal::HIGH;
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong instruction step for instruction THUMB STR");
+            }
+        // LDR
+        } else {
+            if self.instruction_step == InstructionStep::STEP0 {
+                req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                self.instruction_step = InstructionStep::STEP1;
+            } else if self.instruction_step == InstructionStep::STEP1 {
+                self.data_is_fetch = false;
+                req.bus_cycle = BusCycle::INTERNAL;
+                req.address = self.rf.get_register(13, 0).wrapping_add(nn << 2);
+                req.mas = TransferSize::WORD;
+                self.instruction_step = InstructionStep::STEP2;
+            } else if self.instruction_step == InstructionStep::STEP2 {
+                let mut data_to_write = rsp.data;
+                let offset = self.last_used_address % 4;
+                data_to_write = data_to_write.rotate_right(offset * 8);
+                self.rf.write_register(rd, data_to_write);
+                self.data_is_fetch = false;
+                self.instruction_step = InstructionStep::STEP0;
+            } else {
+                panic!("Wrong instruction step for instruction THUMB STR");
+            }
+        }
     }
 
     pub fn thumb_load_address(&mut self) {

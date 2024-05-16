@@ -187,12 +187,24 @@ impl ARM7TDMI {
                 ThumbInstructionType::HiRegisterBx => {
                     self.thumb_hi_register_bx(&mut next_request, &rsp)
                 }
-                ThumbInstructionType::PcRelativeLoad => self.thumb_pc_relative_load(),
-                ThumbInstructionType::LoadStoreRegOffset => self.thumb_load_store_reg_offset(),
-                ThumbInstructionType::LoadStoreSignExt => self.thumb_load_store_sign_ext(),
-                ThumbInstructionType::LoadStoreImmOffset => self.thumb_load_store_imm_offset(),
-                ThumbInstructionType::LoadStoreHalfWord => self.thumb_load_store_halfword(),
-                ThumbInstructionType::SpRelativeLoadStore => self.thumb_sp_relative_load_store(),
+                ThumbInstructionType::PcRelativeLoad => {
+                    self.thumb_pc_relative_load(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::LoadStoreRegOffset => {
+                    self.thumb_load_store_reg_offset(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::LoadStoreSignExt => {
+                    self.thumb_load_store_sign_ext(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::LoadStoreImmOffset => {
+                    self.thumb_load_store_imm_offset(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::LoadStoreHalfWord => {
+                    self.thumb_load_store_halfword(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::SpRelativeLoadStore => {
+                    self.thumb_sp_relative_load_store(&mut next_request, &rsp)
+                }
                 ThumbInstructionType::LoadAddress => self.thumb_load_address(),
                 ThumbInstructionType::AddOffsetToSp => self.thumb_add_offset_to_sp(),
                 ThumbInstructionType::PushPopRegister => self.thumb_push_pop_register(),
