@@ -395,6 +395,28 @@ impl RegisterFile {
             _ => OperatingMode::SYSTEM,
         }
     }
+
+    /// RegisterFile::is_thumb_mode
+    ///
+    /// Return true if thumb mode is active, false otherwise
+    ///
+    /// @return [bool]: is thumb mode set?
+    pub fn is_thumb_mode(&self) -> bool {
+        self.get_cpsr().is_bit_set(5)
+    }
+
+    /// RegisterFile::get_r15_increment
+    ///
+    /// Return 2 if thumb mode is active, 4 otherwise
+    ///
+    /// @return [bool]: is thumb mode set?
+    pub fn get_r15_increment(&self) -> u32 {
+        if self.is_thumb_mode() {
+            2
+        } else {
+            4
+        }
+    }
 }
 
 #[cfg(test)]

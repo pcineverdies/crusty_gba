@@ -84,7 +84,7 @@ impl ARM7TDMI {
     /// @param [MemoryResponse]: response from the bus to a previous request of the cpu.
     /// @return [MemoryRequest]: request from the cpu towards the bus.
     pub fn step(&mut self, rsp: MemoryResponse) -> MemoryRequest {
-        let thumb_mode_active = self.rf.get_cpsr().is_bit_set(5);
+        let thumb_mode_active = self.rf.is_thumb_mode();
 
         // Build request to fetch new instruction. If the current execute stage requires the usage
         // of the memory, then the data will be overridden, otherwise it will be used to access the
@@ -180,8 +180,10 @@ impl ARM7TDMI {
             }
         } else {
             match decode_thumb(self.arm_current_execute) {
-                ThumbInstructionType::MoveShiftedRegister => self.thumb_move_shifter_register(),
-                ThumbInstructionType::AddSubtract => self.thumb_add_subtract(),
+                ThumbInstructionType::MoveShiftedRegister => {
+                    self.thumb_move_shifter_register(&mut next_request)
+                }
+                ThumbInstructionType::AddSubtract => self.thumb_add_subtract(&mut next_request),
                 ThumbInstructionType::AluImmediate => self.thumb_alu_immediate(),
                 ThumbInstructionType::Alu => self.thumb_alu(&mut next_request),
                 ThumbInstructionType::HiRegisterBx => {
@@ -209,9 +211,15 @@ impl ARM7TDMI {
                 ThumbInstructionType::AddOffsetToSp => self.thumb_add_offset_to_sp(),
                 ThumbInstructionType::PushPopRegister => self.thumb_push_pop_register(),
                 ThumbInstructionType::MultipleLoadStore => self.thumb_multiple_load_store(),
-                ThumbInstructionType::ConditionalBranch => self.thumb_conditional_branch(),
-                ThumbInstructionType::SoftwareInterrupt => self.thumb_software_interrupt(),
-                ThumbInstructionType::UncoditionalBranch => self.thumb_unconditional_branch(),
+                ThumbInstructionType::ConditionalBranch => {
+                    self.thumb_branch(&mut next_request, true)
+                }
+                ThumbInstructionType::SoftwareInterrupt => {
+                    self.thumb_software_interrupt(&mut next_request)
+                }
+                ThumbInstructionType::UncoditionalBranch => {
+                    self.thumb_branch(&mut next_request, false)
+                }
                 ThumbInstructionType::LongBranchWithLink => self.thumb_long_branch_with_link(),
             }
         }

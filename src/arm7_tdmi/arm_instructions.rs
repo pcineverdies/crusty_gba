@@ -20,6 +20,8 @@ impl ARM7TDMI {
         let s_flag = self.arm_current_execute.get_range(20, 20);
         // Opcode of the alu instruction
         let opcode = ArmAluOpcode::from_value(self.arm_current_execute.get_range(24, 21));
+        // Add value for r15 usage (thumb dependant)
+        let r15_inc = self.rf.get_r15_increment();
 
         if self.instruction_step == InstructionStep::STEP0 {
             // === Decode instruction ===
@@ -72,8 +74,8 @@ impl ARM7TDMI {
                     shift_amount = self.rf.get_register(rs, 0).get_range(7, 0);
 
                     // if rn == 15 or rm == 15, operands should be incremented
-                    operand1 = self.rf.get_register(rn, 12);
-                    operand2 = self.rf.get_register(rm, 12);
+                    operand1 = self.rf.get_register(rn, r15_inc * 3);
+                    operand2 = self.rf.get_register(rm, r15_inc * 3);
                 }
 
                 (operand2, carry_shifter, there_is_shift) = barrel_shifter(
@@ -116,7 +118,10 @@ impl ARM7TDMI {
         } else if self.instruction_step == InstructionStep::STEP1 {
             // If rd == 15, 2 more extra cycles to refill the pipeline
             if rd == 15 && !ArmAluOpcode::is_test_opcode(opcode) {
-                self.arm_instruction_queue.clear();
+                if s_flag == 1 {
+                    let current_spsr = self.rf.get_spsr();
+                    let _ = self.rf.write_cpsr(current_spsr);
+                }
                 self.arm_instruction_queue.clear();
                 req.bus_cycle = BusCycle::NONSEQUENTIAL;
                 self.data_is_fetch = false;
@@ -128,13 +133,9 @@ impl ARM7TDMI {
             req.address = self.rf.get_register(15, 0);
             self.instruction_step = InstructionStep::STEP3;
         } else if self.instruction_step == InstructionStep::STEP3 {
-            if s_flag == 1 {
-                let current_spsr = self.rf.get_spsr();
-                let _ = self.rf.write_cpsr(current_spsr);
-            }
-            req.address = self.rf.get_register(15, 4);
+            req.address = self.rf.get_register(15, r15_inc);
             self.rf
-                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
+                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(r15_inc));
             self.instruction_step = InstructionStep::STEP0;
         } else {
             panic!("Wrong step for instructin type ARM_DATA_PROCESSING");
@@ -309,9 +310,10 @@ impl ARM7TDMI {
             let shift_amount = self.arm_current_execute.get_range(11, 7);
             let shift_type = self.arm_current_execute.get_range(6, 5);
             let rm = self.arm_current_execute.get_range(3, 0);
+            let r15_inc = self.rf.get_r15_increment();
 
             // Address to use as read from the base register
-            address_to_mem = self.rf.get_register(rn, 8);
+            address_to_mem = self.rf.get_register(rn, r15_inc << 1);
 
             // Compute the offset
             if i_flag == 0 {
@@ -677,7 +679,6 @@ impl ARM7TDMI {
 
         // The objective of the instruction is to empty the pipeline and restore the execution at
         // address 0x00000008 in supervisor mode.
-        // TODO: check what you have to set when executing an exception
 
         if self.instruction_step == InstructionStep::STEP0 {
             self.arm_instruction_queue.clear();
@@ -687,10 +688,13 @@ impl ARM7TDMI {
         } else if self.instruction_step == InstructionStep::STEP1 {
             // Store the current cpsr in the spsr of the new mode
             let current_cpsr = self.rf.get_cpsr();
+            let is_thumb_mode = self.rf.is_thumb_mode();
+            let r15_inc = self.rf.get_r15_increment();
 
+            // modify mode and get back to arm mode
             if self
                 .rf
-                .write_cpsr((current_cpsr & 0xffffffe0) | (OperatingMode::SUPERVISOR as u32))
+                .write_cpsr((current_cpsr & 0xffffffc0) | (OperatingMode::SUPERVISOR as u32))
                 .is_err()
             {
                 panic!("Invalid mode assigned to cpsr")
@@ -700,7 +704,8 @@ impl ARM7TDMI {
             }
 
             // Modify the register r14 with the return address
-            self.rf.write_register(14, self.rf.get_register(15, 4));
+            self.rf
+                .write_register(14, self.rf.get_register(15, r15_inc));
             // r15 = 0x08 (it will be updated at the end of the current instruction)
             self.rf.write_register(15, 0x04);
 
