@@ -209,8 +209,12 @@ impl ARM7TDMI {
                 }
                 ThumbInstructionType::LoadAddress => self.thumb_load_address(),
                 ThumbInstructionType::AddOffsetToSp => self.thumb_add_offset_to_sp(),
-                ThumbInstructionType::PushPopRegister => self.thumb_push_pop_register(),
-                ThumbInstructionType::MultipleLoadStore => self.thumb_multiple_load_store(),
+                ThumbInstructionType::PushPopRegister => {
+                    self.thumb_push_pop_register(&mut next_request, &rsp)
+                }
+                ThumbInstructionType::MultipleLoadStore => {
+                    self.thumb_multiple_load_store(&mut next_request, &rsp)
+                }
                 ThumbInstructionType::ConditionalBranch => {
                     self.thumb_branch(&mut next_request, true)
                 }
@@ -220,7 +224,9 @@ impl ARM7TDMI {
                 ThumbInstructionType::UncoditionalBranch => {
                     self.thumb_branch(&mut next_request, false)
                 }
-                ThumbInstructionType::LongBranchWithLink => self.thumb_long_branch_with_link(),
+                ThumbInstructionType::LongBranchWithLink => {
+                    self.thumb_long_branch_with_link(&mut next_request, &rsp)
+                }
             }
         }
 

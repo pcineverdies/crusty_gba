@@ -1051,6 +1051,7 @@ impl ARM7TDMI {
         let rn = self.arm_current_execute.get_range(19, 16);
         let mut r_list = self.arm_current_execute.get_range(15, 0);
         let mut was_list_empy = false;
+        let r15_inc = self.rf.get_r15_increment();
         let is_rn_in_list = (r_list & 1 << rn) != 0;
 
         if !self.rf.check_condition_code(condition) {
@@ -1147,9 +1148,9 @@ impl ARM7TDMI {
 
                 // Use user data or general data depending on s_flag
                 req.data = if s_flag == 1 {
-                    self.rf.get_user_register(register_to_use, 12)
+                    self.rf.get_user_register(register_to_use, r15_inc * 3)
                 } else {
-                    self.rf.get_register(register_to_use, 12)
+                    self.rf.get_register(register_to_use, r15_inc * 3)
                 };
 
                 if self.instruction_counter_step == 0 {
@@ -1197,7 +1198,7 @@ impl ARM7TDMI {
 
                 // writeback only if rn is in not list
                 if !is_rn_in_list {
-                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, 4);
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, r15_inc);
                 }
 
                 // Use the normal registers if s_flag and r15 is in the list of registers to load:
@@ -1240,9 +1241,9 @@ impl ARM7TDMI {
                 req.address = self.rf.get_register(15, 0);
                 self.instruction_step = InstructionStep::STEP4;
             } else if self.instruction_step == InstructionStep::STEP4 {
-                req.address = self.rf.get_register(15, 4);
+                req.address = self.rf.get_register(15, r15_inc);
                 self.rf
-                    .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
+                    .write_register(15, self.rf.get_register(15, 0).wrapping_sub(r15_inc));
                 self.instruction_step = InstructionStep::STEP0;
             } else {
                 panic!("Wrong step for LDM instruction");

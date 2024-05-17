@@ -397,11 +397,50 @@ impl ARM7TDMI {
         }
     }
 
-    pub fn thumb_push_pop_register(&self) {
-        todo!()
+    pub fn thumb_push_pop_register(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(11, 11);
+        let pc_bit = self.arm_current_execute.get_range(8, 8);
+        let r_list = self.arm_current_execute.get_range(7, 0);
+
+        let current_instruction = self.arm_current_execute;
+        let mut arm_instruction = 0b1110_1000_0010_0000_0000_0000_0000_0000;
+
+        if opcode == 0 {
+            arm_instruction |= 1 << 24;
+            if pc_bit == 1 {
+                arm_instruction |= 1 << 14;
+            }
+        } else {
+            arm_instruction |= 1 << 23;
+            if pc_bit == 1 {
+                arm_instruction |= 1 << 15;
+            }
+        }
+
+        arm_instruction |= opcode << 20;
+        arm_instruction |= 13 << 16;
+        arm_instruction |= r_list << 0;
+
+        self.arm_current_execute = arm_instruction;
+        self.arm_block_data_transfer(req, rsp);
+        self.arm_current_execute = current_instruction;
     }
-    pub fn thumb_multiple_load_store(&self) {
-        todo!()
+
+    pub fn thumb_multiple_load_store(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        let opcode = self.arm_current_execute.get_range(11, 11);
+        let rb = self.arm_current_execute.get_range(10, 8);
+        let r_list = self.arm_current_execute.get_range(7, 0);
+
+        let current_instruction = self.arm_current_execute;
+        let mut arm_instruction = 0b1110_1000_1010_0000_0000_0000_0000_0000;
+
+        arm_instruction |= opcode << 20;
+        arm_instruction |= rb << 16;
+        arm_instruction |= r_list << 0;
+
+        self.arm_current_execute = arm_instruction;
+        self.arm_block_data_transfer(req, rsp);
+        self.arm_current_execute = current_instruction;
     }
 
     pub fn thumb_branch(&mut self, req: &mut MemoryRequest, cond_branch: bool) {
@@ -438,9 +477,9 @@ impl ARM7TDMI {
             req.address = self.rf.get_register(15, 0);
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
-            req.address = self.rf.get_register(15, 4);
+            req.address = self.rf.get_register(15, 2);
             self.rf
-                .write_register(15, (self.rf.get_register(15, 0)).wrapping_sub(4));
+                .write_register(15, (self.rf.get_register(15, 0)).wrapping_sub(2));
             self.instruction_step = InstructionStep::STEP0;
         } else {
             panic!("Wrong instruction step for THUMB BRANCH")
@@ -455,8 +494,54 @@ impl ARM7TDMI {
         self.arm_swi(req);
         self.arm_current_execute = current_instruction;
     }
+    // THUMB.19: long branch with link
+    // This may be used to call (or jump) to a subroutine, return address is saved in LR (R14).
+    // Unlike all other THUMB mode instructions, this instruction occupies 32bit of memory which are split into two 16bit THUMB opcodes.
+    //  First Instruction - LR = PC+4+(nn SHL 12)
+    //   15-11  Must be 11110b for BL/BLX type of instructions
+    //   10-0   nn - Upper 11 bits of Target Address
+    //  Second Instruction - PC = LR + (nn SHL 1), and LR = PC+2 OR 1 (and BLX: T=0)
+    //   15-11  Opcode
+    //           11111b: BL label   ;branch long with link
+    //           11101b: BLX label  ;branch long with link switch to ARM mode (ARM9)
+    //   10-0   nn - Lower 11 bits of Target Address (BLX: Bit0 Must be zero)
+    // The destination address range is (PC+4)-400000h..+3FFFFEh, ie. PC+/-4M.
+    // Target must be halfword-aligned. As Bit 0 in LR is set, it may be used to return by a BX LR instruction (keeping CPU in THUMB mode).
+    // Return: No flags affected, PC adjusted, return address in LR.
+    // Execution Time: 3S+1N (first opcode 1S, second opcode 2S+1N).
+    // Note: Exceptions may or may not occur between first and second opcode, this is "implementation defined" (unknown how this is implemented in GBA and NDS).
+    // Using only the 2nd half of BL as "BL LR+imm" is possible (for example, Mario Golf Advance Tour for GBA uses opcode F800h as "BL LR+0").
+    pub fn thumb_long_branch_with_link(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        println!("executing bl");
+        if self.instruction_step == InstructionStep::STEP0 {
+            self.data_is_fetch = false;
+            req.address = self.rf.get_register(15, 2);
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.instruction_step = InstructionStep::STEP1;
+        } else if self.instruction_step == InstructionStep::STEP1 {
+            let mut dest_address =
+                self.arm_current_execute.get_range(10, 0) << 12 + rsp.data.get_range(10, 0) << 1;
+            if dest_address.is_bit_set(22) {
+                dest_address |= 0xffc00000;
+            }
 
-    pub fn thumb_long_branch_with_link(&self) {
-        todo!()
+            self.rf.write_register(14, self.rf.get_register(15, 2));
+            self.rf.write_register(15, dest_address);
+
+            self.data_is_fetch = false;
+            self.arm_instruction_queue.clear();
+            req.bus_cycle = BusCycle::NONSEQUENTIAL;
+            self.instruction_step = InstructionStep::STEP2;
+        } else if self.instruction_step == InstructionStep::STEP2 {
+            req.address = self.rf.get_register(15, 0);
+            self.instruction_step = InstructionStep::STEP3;
+        } else if self.instruction_step == InstructionStep::STEP3 {
+            req.address = self.rf.get_register(15, 2);
+            self.rf
+                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(2));
+            self.instruction_step = InstructionStep::STEP0;
+        } else {
+            panic!("Wrong step for instruction BL THUMB");
+        }
     }
 }

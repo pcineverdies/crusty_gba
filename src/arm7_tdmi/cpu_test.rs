@@ -1005,4 +1005,141 @@ mod cpu_test {
 
         assert_eq!(cpu.rf.get_register(9, 0), 9);
     }
+
+    #[test]
+    fn thumb_push_pop() {
+        let mut cpu = ARM7TDMI::new();
+
+        // main_thumb:
+        //  mov r1, #10
+        //  mov r2, #20
+        //  push {r1, r2}
+        //  mov r3, #30
+        //  mov r4, #40
+        //  pop {r3, r4}
+        //
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x2214_210a),
+            (0x00100004_u32, 0x231e_b406),
+            (0x00100008_u32, 0xbc18_2428),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE3A0D000_u32),
+            (0x08000010_u32, 0xE12FFF1A_u32), // bx 0x00100000
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..100 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(3, 0), 10);
+        assert_eq!(cpu.rf.get_register(4, 0), 20);
+    }
+
+    #[test]
+    fn ldm_stm_thumb() {
+        let mut cpu = ARM7TDMI::new();
+
+        // main_thumb:
+        //  mov r1, #10
+        //  mov r2, #20
+        //  stmia r3!, {r1, r2}
+        //  mov r3, #30
+        //  mov r4, #40
+        //  ldmia r5!, {r3, r4}
+        //
+
+        let mut instructions = HashMap::from([
+            (0x00100000_u32, 0x2214_210a),
+            (0x00100004_u32, 0x231e_c306),
+            (0x00100008_u32, 0xcd18_2428),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE3A0A601_u32),
+            (0x08000008_u32, 0xE28AA001_u32),
+            (0x0800000c_u32, 0xE3A0D000_u32),
+            (0x08000010_u32, 0xE12FFF1A_u32), // bx 0x00100000
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..100 {
+            let req = cpu.step(response);
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(*instructions.get(&0).unwrap_or(&0), 10);
+        assert_eq!(*instructions.get(&4).unwrap_or(&0), 20);
+        assert_eq!(cpu.rf.get_register(5, 0), 4);
+    }
+
+    #[test]
+    fn bl_thumb() {
+        let mut cpu = ARM7TDMI::new();
+
+        // main_thumb:
+        //
+        //	mov r0, #0
+        //  bl function
+        // end:
+        //  b end
+        //
+        // function:
+        //  mov r0, #10
+        //  mov r15, r14
+
+        let mut instructions = HashMap::from([
+            (0x00000000_u32, 0xf000_2000),
+            (0x00000004_u32, 0xe7fe_f801),
+            (0x00000008_u32, 0x46f7_200a),
+            (0x0000000c_u32, 0x0000_0000),
+            (0x08000000_u32, NOP),
+            (0x08000004_u32, 0xE12FFF1A_u32), // bx 0
+        ]);
+
+        let mut response = MemoryResponse {
+            data: NOP,
+            n_wait: BusSignal::HIGH,
+        };
+
+        for _ in 0..100 {
+            let req = cpu.step(response);
+            println!(
+                "{:#06X} -> R15 is {:#010X}",
+                cpu.arm_current_execute & 0xffff,
+                cpu.rf.get_register(15, 0)
+            );
+            if req.nr_w == BusSignal::LOW {
+                response.data = *instructions
+                    .get(&(req.address & 0xFFFFFFFC))
+                    .unwrap_or(&NOP_THUMB);
+            } else {
+                instructions.insert(req.address, req.data);
+            }
+        }
+
+        assert_eq!(cpu.rf.get_register(0, 0), 10);
+    }
 }
