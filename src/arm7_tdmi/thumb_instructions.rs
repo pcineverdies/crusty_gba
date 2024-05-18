@@ -512,15 +512,22 @@ impl ARM7TDMI {
     // Note: Exceptions may or may not occur between first and second opcode, this is "implementation defined" (unknown how this is implemented in GBA and NDS).
     // Using only the 2nd half of BL as "BL LR+imm" is possible (for example, Mario Golf Advance Tour for GBA uses opcode F800h as "BL LR+0").
     pub fn thumb_long_branch_with_link(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
-        println!("executing bl");
         if self.instruction_step == InstructionStep::STEP0 {
             self.data_is_fetch = false;
             req.address = self.rf.get_register(15, 2);
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
             self.instruction_step = InstructionStep::STEP1;
         } else if self.instruction_step == InstructionStep::STEP1 {
-            let mut dest_address =
-                self.arm_current_execute.get_range(10, 0) << 12 + rsp.data.get_range(10, 0) << 1;
+            let mut received_data = rsp.data;
+            if self.last_used_address.is_bit_set(1) {
+                received_data >>= 16;
+            } else {
+                received_data &= 0xffff;
+            }
+            let mut dest_address = (self.arm_current_execute.get_range(10, 0) << 12)
+                + (received_data.get_range(10, 0) << 1)
+                + self.rf.get_register(15, 4);
+
             if dest_address.is_bit_set(22) {
                 dest_address |= 0xffc00000;
             }

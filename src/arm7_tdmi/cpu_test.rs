@@ -1116,7 +1116,8 @@ mod cpu_test {
             (0x00000008_u32, 0x46f7_200a),
             (0x0000000c_u32, 0x0000_0000),
             (0x08000000_u32, NOP),
-            (0x08000004_u32, 0xE12FFF1A_u32), // bx 0
+            (0x08000000_u32, 0xE28AA001_u32),
+            (0x08000008_u32, 0xE12FFF1A_u32), // bx 0
         ]);
 
         let mut response = MemoryResponse {
@@ -1128,7 +1129,7 @@ mod cpu_test {
             let req = cpu.step(response);
             println!(
                 "{:#06X} -> R15 is {:#010X}",
-                cpu.arm_current_execute & 0xffff,
+                cpu.arm_current_execute,
                 cpu.rf.get_register(15, 0)
             );
             if req.nr_w == BusSignal::LOW {
