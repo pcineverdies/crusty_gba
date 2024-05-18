@@ -175,7 +175,7 @@ impl RegisterFile {
                 mode if mode == OperatingMode::UND as u32 => self.und_bank[index - 13] = value,
                 _ => self.registers[index] = value,
             },
-            15 => self.registers[15] = value,
+            15 => self.registers[15] = value & !1,
             _ => panic!("Wrong index used in `get_register`: {}", index),
         };
     }
@@ -441,9 +441,9 @@ mod test_register_file {
         rf.write_register(14, 0x7ac0);
         assert_eq!(0x7ac0, rf.get_register(14, 0));
 
-        // r14 should get 0x1001 as value
+        // r14 should get 0x1000 as value
         rf.write_register(15, 0x1001);
-        assert_eq!(0x1001, rf.get_register(15, 0));
+        assert_eq!(0x1000, rf.get_register(15, 0));
 
         // Should be able to enter IRQ mode
         assert_eq!(rf.write_cpsr(OperatingMode::IRQ as u32), Ok(()));
@@ -468,7 +468,7 @@ mod test_register_file {
         assert_eq!(0xbe11, rf.get_register(14, 0));
 
         // r15 is alawys the same
-        assert_eq!(0x1001, rf.get_register(15, 0));
+        assert_eq!(0x1000, rf.get_register(15, 0));
 
         // Enter system mode
         assert_eq!(rf.write_cpsr(OperatingMode::SYSTEM as u32), Ok(()));
@@ -478,7 +478,7 @@ mod test_register_file {
 
         // SYSTEM and USER share the same registers
         assert_eq!(0x7ac0, rf.get_register(14, 0));
-        assert_eq!(0x1001, rf.get_register(15, 0));
+        assert_eq!(0x1000, rf.get_register(15, 0));
         assert_eq!(rf.get_mode(), OperatingMode::SYSTEM);
 
         // Enter supervisor mode

@@ -40,9 +40,7 @@ impl ARM7TDMI {
             arm_instruction |= 0x2 << 21;
         }
 
-        if opcode < 2 {
-            arm_instruction = arm_instruction.set_bit(4);
-        } else {
+        if opcode >= 2 {
             arm_instruction = arm_instruction.set_bit(25);
         }
         arm_instruction |= rs << 16;
@@ -160,7 +158,6 @@ impl ARM7TDMI {
                 let op1 = self.rf.get_register(full_rd, 4);
                 let op2 = self.rf.get_register(full_rs, 4);
                 let (result, c_flag, v_flag) = self.alu_operation(op1, op2, ArmAluOpcode::CMP);
-                self.rf.write_register(full_rd, result);
                 self.update_flags(result, ArmAluOpcode::CMP, full_rd, c_flag, true, v_flag);
             } else if opcode == 2 {
                 let op1 = self.rf.get_register(full_rd, 4);
@@ -168,8 +165,7 @@ impl ARM7TDMI {
                 let (result, _, _) = self.alu_operation(op1, op2, ArmAluOpcode::MOV);
                 self.rf.write_register(full_rd, result);
                 if full_rd == 15 {
-                    self.rf
-                        .write_register(full_rd, self.rf.get_register(15, 0) & !2);
+                    self.rf.write_register(15, self.rf.get_register(15, 0) & !1);
                     self.arm_instruction_queue.clear();
                     req.bus_cycle = BusCycle::NONSEQUENTIAL;
                     self.data_is_fetch = false;
@@ -182,18 +178,14 @@ impl ARM7TDMI {
                 self.instruction_step = InstructionStep::STEP3;
             }
         } else if self.instruction_step == InstructionStep::STEP1 {
-            req.mas = TransferSize::WORD;
             req.address = self.rf.get_register(15, 0);
             req.bus_cycle = BusCycle::SEQUENTIAL;
-            self.data_is_fetch = false;
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
-            req.mas = TransferSize::WORD;
-            req.address = self.rf.get_register(15, 4);
-            self.arm_instruction_queue.push_back(rsp.data);
+            req.address = self.rf.get_register(15, 2);
             self.rf
-                .write_register(15, (self.rf.get_register(15, 0)).wrapping_sub(4));
-            let _ = self.rf.write_cpsr(self.rf.get_cpsr().clear_bit(5));
+                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(2));
+            self.instruction_step = InstructionStep::STEP0;
         } else if self.instruction_step == InstructionStep::STEP3 {
             if bx_address.is_bit_set(0) {
                 req.mas = TransferSize::HALFWORD;
@@ -393,7 +385,7 @@ impl ARM7TDMI {
                 .write_register(13, self.rf.get_register(13, 0).wrapping_add(nn));
         } else {
             self.rf
-                .write_register(13, self.rf.get_register(13, 0).wrapping_add(nn));
+                .write_register(13, self.rf.get_register(13, 0).wrapping_sub(nn));
         }
     }
 
@@ -455,7 +447,7 @@ impl ARM7TDMI {
         } else {
             let nn = self.arm_current_execute.get_range(10, 0);
             if nn.is_bit_set(10) {
-                nn | 0xfffff100
+                nn | 0xfffff800
             } else {
                 nn
             }
@@ -494,23 +486,7 @@ impl ARM7TDMI {
         self.arm_swi(req);
         self.arm_current_execute = current_instruction;
     }
-    // THUMB.19: long branch with link
-    // This may be used to call (or jump) to a subroutine, return address is saved in LR (R14).
-    // Unlike all other THUMB mode instructions, this instruction occupies 32bit of memory which are split into two 16bit THUMB opcodes.
-    //  First Instruction - LR = PC+4+(nn SHL 12)
-    //   15-11  Must be 11110b for BL/BLX type of instructions
-    //   10-0   nn - Upper 11 bits of Target Address
-    //  Second Instruction - PC = LR + (nn SHL 1), and LR = PC+2 OR 1 (and BLX: T=0)
-    //   15-11  Opcode
-    //           11111b: BL label   ;branch long with link
-    //           11101b: BLX label  ;branch long with link switch to ARM mode (ARM9)
-    //   10-0   nn - Lower 11 bits of Target Address (BLX: Bit0 Must be zero)
-    // The destination address range is (PC+4)-400000h..+3FFFFEh, ie. PC+/-4M.
-    // Target must be halfword-aligned. As Bit 0 in LR is set, it may be used to return by a BX LR instruction (keeping CPU in THUMB mode).
-    // Return: No flags affected, PC adjusted, return address in LR.
-    // Execution Time: 3S+1N (first opcode 1S, second opcode 2S+1N).
-    // Note: Exceptions may or may not occur between first and second opcode, this is "implementation defined" (unknown how this is implemented in GBA and NDS).
-    // Using only the 2nd half of BL as "BL LR+imm" is possible (for example, Mario Golf Advance Tour for GBA uses opcode F800h as "BL LR+0").
+
     pub fn thumb_long_branch_with_link(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         if self.instruction_step == InstructionStep::STEP0 {
             self.data_is_fetch = false;
@@ -524,15 +500,17 @@ impl ARM7TDMI {
             } else {
                 received_data &= 0xffff;
             }
-            let mut dest_address = (self.arm_current_execute.get_range(10, 0) << 12)
-                + (received_data.get_range(10, 0) << 1)
-                + self.rf.get_register(15, 4);
 
-            if dest_address.is_bit_set(22) {
-                dest_address |= 0xffc00000;
+            let mut offset = (self.arm_current_execute.get_range(10, 0) << 12)
+                + (received_data.get_range(10, 0) << 1);
+
+            if offset.is_bit_set(22) {
+                offset |= 0xffc00000;
             }
 
-            self.rf.write_register(14, self.rf.get_register(15, 2));
+            let dest_address = self.rf.get_register(15, 4).wrapping_add(offset);
+
+            self.rf.write_register(14, self.rf.get_register(15, 5));
             self.rf.write_register(15, dest_address);
 
             self.data_is_fetch = false;

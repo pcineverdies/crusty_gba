@@ -350,6 +350,8 @@ impl ARM7TDMI {
             // In case of byte transfer, modify the transfer size
             if b_flag == 1 {
                 req.mas = TransferSize::BYTE;
+            } else {
+                req.mas = TransferSize::WORD;
             }
         }
 
@@ -1144,6 +1146,7 @@ impl ARM7TDMI {
                 self.data_is_fetch = false;
                 req.bus_cycle = BusCycle::SEQUENTIAL;
                 req.address = self.list_transfer_op[self.instruction_counter_step as usize].0;
+                req.mas = TransferSize::WORD;
                 req.nr_w = BusSignal::HIGH;
 
                 // Use user data or general data depending on s_flag
@@ -1187,6 +1190,7 @@ impl ARM7TDMI {
                 self.data_is_fetch = false;
                 req.bus_cycle = BusCycle::SEQUENTIAL;
                 req.address = self.list_transfer_op[0].0;
+                req.mas = TransferSize::WORD;
                 if items_to_handle == 1 {
                     req.bus_cycle = BusCycle::INTERNAL;
                 }
@@ -1198,7 +1202,7 @@ impl ARM7TDMI {
 
                 // writeback only if rn is in not list
                 if !is_rn_in_list {
-                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, r15_inc);
+                    self.modify_register_ldm_stm(was_list_empy, w_flag, u_flag, rn, 4);
                 }
 
                 // Use the normal registers if s_flag and r15 is in the list of registers to load:
