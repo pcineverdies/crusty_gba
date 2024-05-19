@@ -343,6 +343,9 @@ impl ARM7TDMI {
             // If the instruction requires a pre-modification, use the modify value as address.
             if p_flag == 1 {
                 req.address = address_to_write;
+                if self.rf.is_thumb_mode() && rn == 15 {
+                    req.address = req.address & !2;
+                }
             } else if tw_flag == 1 {
                 req.n_trans = BusSignal::LOW;
             }
@@ -690,7 +693,6 @@ impl ARM7TDMI {
         } else if self.instruction_step == InstructionStep::STEP1 {
             // Store the current cpsr in the spsr of the new mode
             let current_cpsr = self.rf.get_cpsr();
-            let is_thumb_mode = self.rf.is_thumb_mode();
             let r15_inc = self.rf.get_r15_increment();
 
             // modify mode and get back to arm mode
@@ -1239,6 +1241,7 @@ impl ARM7TDMI {
                         req.bus_cycle = BusCycle::INTERNAL;
                     }
                     req.address = self.list_transfer_op[self.instruction_counter_step as usize].0;
+                    req.mas = TransferSize::WORD;
                     self.instruction_counter_step += 1;
                 }
             } else if self.instruction_step == InstructionStep::STEP3 {
