@@ -6,6 +6,13 @@ use crate::bus::{BusCycle, MemoryRequest, MemoryResponse, TransferSize};
 use crate::common::BitOperation;
 
 impl ARM7TDMI {
+    /// arm7_tdmi::thumb_move_shifter_register
+    ///
+    /// Function to execute thumb.1 instructions. It works by translating the opcode to the
+    /// corresponding arm one (move with shift)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
     pub fn thumb_move_shifter_register(&mut self, req: &mut MemoryRequest) {
         let opcode = self.arm_current_execute.get_range(12, 11);
         let offset = self.arm_current_execute.get_range(10, 6);
@@ -25,6 +32,13 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_add_subtract
+    ///
+    /// Function to execute thumb.2 instructions. It works by translating the opcode to the
+    /// corresponding arm one (either add or subtract)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
     pub fn thumb_add_subtract(&mut self, req: &mut MemoryRequest) {
         let opcode = self.arm_current_execute.get_range(10, 9);
         let rn = self.arm_current_execute.get_range(8, 6);
@@ -34,15 +48,20 @@ impl ARM7TDMI {
         let mut arm_instruction = 0b1110_0000_0001_0000_0000_0000_0000_0000;
         let current_instruction = self.arm_current_execute;
 
+        // Add operation
         if opcode & 1 == 0 {
             arm_instruction |= 0x4 << 21;
+
+        // Sub operation
         } else {
             arm_instruction |= 0x2 << 21;
         }
 
+        // Immediate operand, otherwise register operand (default)
         if opcode >= 2 {
             arm_instruction = arm_instruction.set_bit(25);
         }
+
         arm_instruction |= rs << 16;
         arm_instruction |= rd << 12;
         arm_instruction |= rn << 0;
@@ -52,25 +71,36 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_alu_immediate
+    ///
+    /// Function to execute thumb.4 instructions. In this case, instead of translating the
+    /// instructions, the code is re-implemented.
     pub fn thumb_alu_immediate(&mut self) {
         let opcode = self.arm_current_execute.get_range(12, 11);
         let rd = self.arm_current_execute.get_range(10, 8);
         let nn = self.arm_current_execute.get_range(7, 0);
         let (result, c_flag, v_flag): (u32, bool, bool);
 
+        // MOVS Rd, #nn
         if opcode == 0 {
             (result, c_flag, v_flag) = self.alu_operation(0, nn, ArmAluOpcode::MOV);
             self.rf.write_register(rd, result);
             self.update_flags(result, ArmAluOpcode::MOV, rd, c_flag, false, v_flag);
+
+        // CMP Rd, #nn
         } else if opcode == 1 {
             (result, c_flag, v_flag) =
                 self.alu_operation(self.rf.get_register(rd, 0), nn, ArmAluOpcode::CMP);
             self.update_flags(result, ArmAluOpcode::CMP, rd, c_flag, false, v_flag);
+
+        // ADDS Rd, #nn
         } else if opcode == 2 {
             (result, c_flag, v_flag) =
                 self.alu_operation(self.rf.get_register(rd, 0), nn, ArmAluOpcode::ADD);
             self.rf.write_register(rd, result);
             self.update_flags(result, ArmAluOpcode::ADD, rd, c_flag, false, v_flag);
+
+        // SUBS Rd, #nn
         } else {
             (result, c_flag, v_flag) =
                 self.alu_operation(self.rf.get_register(rd, 0), nn, ArmAluOpcode::SUB);
@@ -78,6 +108,14 @@ impl ARM7TDMI {
             self.update_flags(result, ArmAluOpcode::SUB, rd, c_flag, false, v_flag);
         }
     }
+
+    /// arm7_tdmi::thumb_alu
+    ///
+    /// Function to execute thumb.3 instructions. It works by translating the opcode to the
+    /// corresponding arm one (either alu opcode or mul opcode)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
     pub fn thumb_alu(&mut self, req: &mut MemoryRequest) {
         let opcode = self.arm_current_execute.get_range(9, 6);
         let rs = self.arm_current_execute.get_range(5, 3);
@@ -93,7 +131,7 @@ impl ARM7TDMI {
             arm_instruction |= rd << 8;
             arm_instruction |= rs << 0;
 
-        // shift case
+        // shift case -> translated to a mov with shift operation
         } else if (opcode >= 0x2 && opcode <= 0x4) || opcode == 0x7 {
             arm_instruction |= 0xd << 21;
             arm_instruction |= rs << 8;
@@ -106,12 +144,14 @@ impl ARM7TDMI {
             arm_instruction |= rd << 12;
             arm_instruction |= rd << 0;
 
-        // neg case
+        // neg case, implemented using RSBS
         } else if opcode == 0x9 {
             arm_instruction |= 0x3 << 21;
             arm_instruction |= rd << 12;
             arm_instruction |= rs << 16;
             arm_instruction = arm_instruction.set_bit(25);
+
+        // All the other alu instructions have a 1 to 1 mapping with arm alu execution
         } else {
             arm_instruction |= opcode << 21;
             arm_instruction |= rd << 12;
@@ -128,6 +168,15 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_hi_register_bx
+    ///
+    /// Function to execute thumb.5 instructions. Since the execution is a bit different from the
+    /// arm one, and different opcodes lead to different functions, the code has been
+    /// re-implemented.
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_hi_register_bx(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(9, 8);
         let msbd = self.arm_current_execute.get_range(7, 7);
@@ -141,11 +190,14 @@ impl ARM7TDMI {
         let bx_address = self.rf.get_register(full_rs, 4);
 
         if self.instruction_step == InstructionStep::STEP0 {
+            // Add rd, rs
             if opcode == 0 {
                 let op1 = self.rf.get_register(full_rd, 4);
                 let op2 = self.rf.get_register(full_rs, 4);
                 let (result, _, _) = self.alu_operation(op1, op2, ArmAluOpcode::ADD);
                 self.rf.write_register(full_rd, result);
+
+                // Need to refill pipeline in case of r15 as destination
                 if full_rd == 15 {
                     self.rf
                         .write_register(full_rd, self.rf.get_register(15, 0) & !2);
@@ -154,16 +206,22 @@ impl ARM7TDMI {
                     self.data_is_fetch = false;
                     self.instruction_step = InstructionStep::STEP1;
                 }
+
+            // cmp rd, rs
             } else if opcode == 1 {
                 let op1 = self.rf.get_register(full_rd, 4);
                 let op2 = self.rf.get_register(full_rs, 4);
                 let (result, c_flag, v_flag) = self.alu_operation(op1, op2, ArmAluOpcode::CMP);
                 self.update_flags(result, ArmAluOpcode::CMP, full_rd, c_flag, true, v_flag);
+
+            // mov rd, rs
             } else if opcode == 2 {
                 let op1 = self.rf.get_register(full_rd, 4);
                 let op2 = self.rf.get_register(full_rs, 4);
                 let (result, _, _) = self.alu_operation(op1, op2, ArmAluOpcode::MOV);
                 self.rf.write_register(full_rd, result);
+
+                // Need to refill pipeline in case of r15 as destination
                 if full_rd == 15 {
                     self.rf.write_register(15, self.rf.get_register(15, 0) & !1);
                     self.arm_instruction_queue.clear();
@@ -171,12 +229,16 @@ impl ARM7TDMI {
                     self.data_is_fetch = false;
                     self.instruction_step = InstructionStep::STEP1;
                 }
+
+            // bx rs
             } else {
                 self.arm_instruction_queue.clear();
                 req.bus_cycle = BusCycle::NONSEQUENTIAL;
                 self.data_is_fetch = false;
                 self.instruction_step = InstructionStep::STEP3;
             }
+
+        // STEP1 and STEP2 are to refill the pipeline in case of r15 as destination
         } else if self.instruction_step == InstructionStep::STEP1 {
             req.address = self.rf.get_register(15, 0);
             req.bus_cycle = BusCycle::SEQUENTIAL;
@@ -186,6 +248,9 @@ impl ARM7TDMI {
             self.rf
                 .write_register(15, self.rf.get_register(15, 0).wrapping_sub(2));
             self.instruction_step = InstructionStep::STEP0;
+
+        // STEP3 and STEP4 are to refill the pipeline in case of bx, possibly switching back
+        // to arm mode
         } else if self.instruction_step == InstructionStep::STEP3 {
             if bx_address.is_bit_set(0) {
                 req.mas = TransferSize::HALFWORD;
@@ -200,6 +265,8 @@ impl ARM7TDMI {
             if msbd == 1 {
                 self.rf.write_register(14, self.rf.get_register(15, 0))
             }
+
+            // thumb mode
             if bx_address.is_bit_set(0) {
                 if self.last_used_address.is_bit_clear(1) {
                     self.arm_instruction_queue
@@ -212,6 +279,8 @@ impl ARM7TDMI {
                 req.address = bx_address.wrapping_add(2);
                 self.rf.write_register(15, bx_address.wrapping_sub(2));
                 let _ = self.rf.write_cpsr(self.rf.get_cpsr().set_bit(5));
+
+            // arm mode
             } else {
                 req.mas = TransferSize::WORD;
                 req.address = bx_address.wrapping_add(4);
@@ -226,6 +295,14 @@ impl ARM7TDMI {
         }
     }
 
+    /// arm7_tdmi::thumb_pc_relative_load
+    ///
+    /// Function to execute thumb.6 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm single data load)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_pc_relative_load(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let rd = self.arm_current_execute.get_range(10, 8);
         let nn = self.arm_current_execute.get_range(7, 0) << 2;
@@ -242,6 +319,14 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_load_store_reg_offset
+    ///
+    /// Function to execute thumb.7 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm single data load)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_load_store_reg_offset(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(11, 10);
         let ro = self.arm_current_execute.get_range(8, 6);
@@ -250,10 +335,12 @@ impl ARM7TDMI {
         let current_instruction = self.arm_current_execute;
         let mut arm_instruction = 0b1110_0111_1000_0000_0000_0000_0000_0000;
 
+        // byte load (word load by default, corresponding to even opcodes)
         if opcode & 1 == 1 {
             arm_instruction = arm_instruction.set_bit(22);
         }
 
+        // load operation (store by default)
         if opcode > 1 {
             arm_instruction = arm_instruction.set_bit(20);
         }
@@ -267,6 +354,14 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_load_store_sign_ext
+    ///
+    /// Function to execute thumb.8 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm halfword transfer)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_load_store_sign_ext(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(11, 10);
         let ro = self.arm_current_execute.get_range(8, 6);
@@ -275,6 +370,7 @@ impl ARM7TDMI {
         let current_instruction = self.arm_current_execute;
         let mut arm_instruction = 0b1110_0001_1000_0000_0000_0000_1000_0000;
 
+        // load (store by default)
         if opcode != 0 {
             arm_instruction = arm_instruction.set_bit(20);
         }
@@ -282,6 +378,7 @@ impl ARM7TDMI {
         arm_instruction |= rb << 16;
         arm_instruction |= rd << 12;
         arm_instruction |= ro << 0;
+
         arm_instruction |= if opcode == 1 {
             2
         } else if opcode == 3 {
@@ -295,9 +392,23 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_load_store_imm_offset
+    ///
+    /// Function to execute thumb.9 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm single data load)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_load_store_imm_offset(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(12, 11);
+
+        let current_instruction = self.arm_current_execute;
+        let mut arm_instruction = 0b1110_0101_1000_0000_0000_0000_0000_0000;
+
+        // different offset depending on the size of teh transfer
         let offset = if opcode > 1 {
+            arm_instruction = arm_instruction.set_bit(22);
             self.arm_current_execute.get_range(10, 6)
         } else {
             self.arm_current_execute.get_range(10, 6) * 4
@@ -305,13 +416,7 @@ impl ARM7TDMI {
         let rb = self.arm_current_execute.get_range(5, 3);
         let rd = self.arm_current_execute.get_range(2, 0);
 
-        let current_instruction = self.arm_current_execute;
-        let mut arm_instruction = 0b1110_0101_1000_0000_0000_0000_0000_0000;
-
-        if opcode > 1 {
-            arm_instruction = arm_instruction.set_bit(22);
-        }
-
+        // load (store by defalut)
         if opcode & 1 == 1 {
             arm_instruction = arm_instruction.set_bit(20);
         }
@@ -325,6 +430,14 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_load_store_halfword
+    ///
+    /// Function to execute thumb.10 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm halfword transfer)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_load_store_halfword(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(11, 11);
         let nn = self.arm_current_execute.get_range(10, 6) << 1;
@@ -344,6 +457,14 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_sp_relative_load_store
+    ///
+    /// Function to execute thumb.11 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm single data load)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_sp_relative_load_store(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(11, 11);
         let rd = self.arm_current_execute.get_range(10, 8);
@@ -362,6 +483,10 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_sp_relative_load_store
+    ///
+    /// Function to execute thumb.12 instructions. As the operation is straightforward, it had been
+    /// re-implemented.
     pub fn thumb_load_address(&mut self) {
         let opcode = self.arm_current_execute.get_range(11, 11);
         let rd = self.arm_current_execute.get_range(10, 8);
@@ -376,6 +501,10 @@ impl ARM7TDMI {
         }
     }
 
+    /// arm7_tdmi::thumb_sp_relative_load_store
+    ///
+    /// Function to execute thumb.13 instructions. As the operation is straightforward, it had been
+    /// re-implemented.
     pub fn thumb_add_offset_to_sp(&mut self) {
         let opcode = self.arm_current_execute.get_range(7, 7);
         let nn = self.arm_current_execute.get_range(6, 0) << 2;
@@ -389,6 +518,14 @@ impl ARM7TDMI {
         }
     }
 
+    /// arm7_tdmi::thumb_push_pop_register
+    ///
+    /// Function to execute thumb.14 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm block data transfer)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_push_pop_register(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(11, 11);
         let pc_bit = self.arm_current_execute.get_range(8, 8);
@@ -397,13 +534,20 @@ impl ARM7TDMI {
         let current_instruction = self.arm_current_execute;
         let mut arm_instruction = 0b1110_1000_0010_0000_0000_0000_0000_0000;
 
+        // push case
         if opcode == 0 {
             arm_instruction |= 1 << 24;
+
+            // add lr to the transfered elements
             if pc_bit == 1 {
                 arm_instruction |= 1 << 14;
             }
+
+        // pop case
         } else {
             arm_instruction |= 1 << 23;
+
+            // add pc to the transfered elements
             if pc_bit == 1 {
                 arm_instruction |= 1 << 15;
             }
@@ -418,6 +562,14 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_multiple_load_store
+    ///
+    /// Function to execute thumb.15 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm block data transfer)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_multiple_load_store(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let opcode = self.arm_current_execute.get_range(11, 11);
         let rb = self.arm_current_execute.get_range(10, 8);
@@ -435,8 +587,17 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_branch
+    ///
+    /// Function to execute thumb.16 and thumb.17 instructions.
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_branch(&mut self, req: &mut MemoryRequest, cond_branch: bool) {
         let opcode = self.arm_current_execute.get_range(11, 8);
+
+        // different offsets are used in conditional and non-conditional cases
         let offset = if cond_branch {
             let nn = self.arm_current_execute.get_range(7, 0);
             if nn.is_bit_set(7) {
@@ -453,10 +614,12 @@ impl ARM7TDMI {
             }
         } << 1;
 
+        // conditional branch requires the condition to be satisfied in order to branch
         if cond_branch && !self.rf.check_condition_code(opcode) {
             return;
         }
 
+        // Next steps consist in refilling the pipeline
         if self.instruction_step == InstructionStep::STEP0 {
             // modify r15
             self.rf
@@ -478,6 +641,14 @@ impl ARM7TDMI {
         }
     }
 
+    /// arm7_tdmi::thumb_software_interrupt
+    ///
+    /// Function to execute thumb.17 instructions. It works by translating the opcode to the
+    /// corresponding arm one (arm swi). In this case, the systems switches back to arm state.
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_software_interrupt(&mut self, req: &mut MemoryRequest) {
         let swi_arm_instruction = 0xe6000000;
         let current_instruction = self.arm_current_execute;
@@ -487,27 +658,43 @@ impl ARM7TDMI {
         self.arm_current_execute = current_instruction;
     }
 
+    /// arm7_tdmi::thumb_long_branch_with_link
+    ///
+    /// Function to execute thumb.19 instructions. Due to the peculiarities of this thumb
+    /// instructions (made of 32 bits instead of 1) it has been reimplemented.
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+    /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_long_branch_with_link(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
+        // fetch next opcode
         if self.instruction_step == InstructionStep::STEP0 {
             self.data_is_fetch = false;
             req.address = self.rf.get_register(15, 2);
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
             self.instruction_step = InstructionStep::STEP1;
+
+        // compute next address
         } else if self.instruction_step == InstructionStep::STEP1 {
             let mut received_data = rsp.data;
+
+            // The second opcode might be on the upper half of the read word
             if self.last_used_address.is_bit_set(1) {
                 received_data >>= 16;
             } else {
                 received_data &= 0xffff;
             }
 
+            // Compute jumping offset
             let mut offset = (self.arm_current_execute.get_range(10, 0) << 12)
                 + (received_data.get_range(10, 0) << 1);
 
+            // Sign extend offset
             if offset.is_bit_set(22) {
                 offset |= 0xffc00000;
             }
 
+            // Next address
             let dest_address = self.rf.get_register(15, 4).wrapping_add(offset);
 
             self.rf.write_register(14, self.rf.get_register(15, 5));
@@ -517,6 +704,8 @@ impl ARM7TDMI {
             self.arm_instruction_queue.clear();
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
             self.instruction_step = InstructionStep::STEP2;
+
+        // refill pipeline
         } else if self.instruction_step == InstructionStep::STEP2 {
             req.address = self.rf.get_register(15, 0);
             self.instruction_step = InstructionStep::STEP3;

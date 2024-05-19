@@ -1092,7 +1092,7 @@ mod cpu_test {
 
         assert_eq!(*instructions.get(&0).unwrap_or(&0), 10);
         assert_eq!(*instructions.get(&4).unwrap_or(&0), 20);
-        assert_eq!(cpu.rf.get_register(5, 0), 4);
+        assert_eq!(cpu.rf.get_register(5, 0), 8);
     }
 
     #[test]
