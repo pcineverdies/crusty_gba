@@ -1,4 +1,6 @@
 pub mod display;
+pub mod gpu_modes;
+pub mod utils;
 use crate::bus::TransferSize;
 use crate::common::BitOperation;
 use crate::gpu::display::Display;
@@ -14,7 +16,11 @@ pub struct Gpu {
     dot_counter: u32,
     display: Display,
     display_array: Vec<u8>,
+    current_dispcnt: u32,
 }
+
+pub const V_SIZE: u32 = 160;
+pub const H_SIZE: u32 = 240;
 
 impl Gpu {
     pub fn new() -> Self {
@@ -34,6 +40,7 @@ impl Gpu {
                 (display::GBA_SCREEN_WIDTH * display::GBA_SCREEN_HEIGHT * 4)
                     as usize
             ],
+            current_dispcnt: 0,
         }
     }
 
@@ -44,55 +51,30 @@ impl Gpu {
 
         if self.dot_counter != 4 {
             return;
-        } else {
-            self.dot_counter = 0;
         }
 
-        let pixel_index = self.h_counter + self.v_counter * 240;
+        self.dot_counter = 0;
 
-        if self.v_counter < 160 && self.h_counter < 240 {
-            let dispcnt = self.gpu_registers.read_halfword(0x04000000);
+        if self.v_counter < V_SIZE && self.h_counter < H_SIZE {
+            self.current_dispcnt = self.gpu_registers.read_halfword(0x04000000);
 
-            if dispcnt.get_range(2, 0) == 3 {
-                let pixel = self
-                    .vram
-                    .read_halfword(0x06000000_u32.wrapping_add(pixel_index * 2));
-                self.display_array[(pixel_index * 4 + 3) as usize] =
-                    pixel.get_range(4, 0) as u8 * 8;
-                self.display_array[(pixel_index * 4 + 2) as usize] =
-                    pixel.get_range(9, 5) as u8 * 8;
-                self.display_array[(pixel_index * 4 + 1) as usize] =
-                    pixel.get_range(14, 10) as u8 * 8;
-                self.display_array[(pixel_index * 4 + 0) as usize] = 0xff;
-            } else if dispcnt.get_range(2, 0) == 4 {
-                let init_address = if dispcnt.is_bit_set(4) {
-                    0x0600a000
-                } else {
-                    0x06000000
-                };
-
-                let palette_color_address = self.vram.read_byte(init_address | pixel_index);
-                let pixel = self
-                    .palette_ram
-                    .read_halfword(0x05000000 | palette_color_address << 1);
-                self.display_array[(pixel_index * 4 + 3) as usize] =
-                    pixel.get_range(4, 0) as u8 * 8;
-                self.display_array[(pixel_index * 4 + 2) as usize] =
-                    pixel.get_range(9, 5) as u8 * 8;
-                self.display_array[(pixel_index * 4 + 1) as usize] =
-                    pixel.get_range(14, 10) as u8 * 8;
-                self.display_array[(pixel_index * 4 + 0) as usize] = 0xff;
+            if self.current_dispcnt.get_range(2, 0) == 3 {
+                self.gpu_mode_3();
+            } else if self.current_dispcnt.get_range(2, 0) == 4 {
+                self.gpu_mode_4();
+            } else if self.current_dispcnt.get_range(2, 0) == 5 {
+                self.gpu_mode_5();
             }
         }
 
         self.h_counter += 1;
 
-        if self.h_counter == 240 + 68 {
+        if self.h_counter == H_SIZE + 68 {
             self.h_counter = 0;
             self.v_counter += 1;
         }
 
-        if self.v_counter == (160 + 68) {
+        if self.v_counter == V_SIZE + 68 {
             self.v_counter = 0;
             self.display.update(&self.display_array);
         }
@@ -129,15 +111,24 @@ impl Gpu {
         }
     }
 
-    pub fn write(&mut self, address: u32, data: u32, mas: TransferSize) {
+    pub fn write(&mut self, address: u32, data: u32, mut mas: TransferSize) {
+        if address >= 0x04000000 && address < 0x04000058 {
+            self.gpu_registers.write(address, data, mas);
+            return;
+        }
+
+        // VRAM, PRAM and OAM do not allow byte wrinting. When you try to do it,
+        // they automatically become halfword writing
+        if mas == TransferSize::BYTE {
+            mas = TransferSize::HALFWORD;
+        }
+
         if address >= 0x06000000 && address < 0x06018000 {
             self.vram.write(address, data, mas);
         } else if address >= 0x05000000 && address < 0x05000400 {
             self.palette_ram.write(address, data, mas);
         } else if address >= 0x07000000 && address < 0x07000400 {
             self.oam.write(address, data, mas);
-        } else if address >= 0x04000000 && address < 0x04000058 {
-            self.gpu_registers.write(address, data, mas);
         } else {
             todo!();
         }

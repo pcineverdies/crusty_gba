@@ -21,7 +21,7 @@ impl Keypad {
 
     pub fn step(&mut self) {
         let keycnt = self.keypad_registers.read_halfword(0x04000132);
-        let mut keyinput = 0xff;
+        let mut keyinput = 0xffff;
 
         let mut events = self.sdl_context.event_pump().unwrap();
 
@@ -63,7 +63,7 @@ impl Keypad {
                 Event::KeyDown {
                     keycode: Some(Keycode::B),
                     ..
-                } => keyinput = keyinput.clear_bit(4),
+                } => keyinput = keyinput.clear_bit(2),
                 Event::KeyDown {
                     keycode: Some(Keycode::Q),
                     ..
