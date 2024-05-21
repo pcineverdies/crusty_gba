@@ -585,7 +585,7 @@ mod cpu_test {
         assert_eq!(cpu.rf.get_register(3, 0), 0xff << 3);
         assert_eq!(cpu.rf.get_register(4, 0), 0xff >> 3);
         assert_eq!(cpu.rf.get_register(5, 0), 0xff >> 3);
-        assert_eq!(cpu.rf.get_register(6, 0), 0xff + 3);
+        assert_eq!(cpu.rf.get_register(6, 0), 0xff + 4);
         assert_eq!(cpu.rf.get_register(7, 0), 0xff - 3 - 1);
     }
 

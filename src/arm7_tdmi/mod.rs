@@ -184,7 +184,7 @@ impl ARM7TDMI {
                     self.thumb_move_shifter_register(&mut next_request)
                 }
                 ThumbInstructionType::AddSubtract => self.thumb_add_subtract(&mut next_request),
-                ThumbInstructionType::AluImmediate => self.thumb_alu_immediate(),
+                ThumbInstructionType::AluImmediate => self.thumb_alu_immediate(&mut next_request),
                 ThumbInstructionType::Alu => self.thumb_alu(&mut next_request),
                 ThumbInstructionType::HiRegisterBx => {
                     self.thumb_hi_register_bx(&mut next_request, &rsp)
@@ -207,8 +207,10 @@ impl ARM7TDMI {
                 ThumbInstructionType::SpRelativeLoadStore => {
                     self.thumb_sp_relative_load_store(&mut next_request, &rsp)
                 }
-                ThumbInstructionType::LoadAddress => self.thumb_load_address(),
-                ThumbInstructionType::AddOffsetToSp => self.thumb_add_offset_to_sp(),
+                ThumbInstructionType::LoadAddress => self.thumb_load_address(&mut next_request),
+                ThumbInstructionType::AddOffsetToSp => {
+                    self.thumb_add_offset_to_sp(&mut next_request)
+                }
                 ThumbInstructionType::PushPopRegister => {
                     self.thumb_push_pop_register(&mut next_request, &rsp)
                 }
@@ -225,7 +227,7 @@ impl ARM7TDMI {
                     self.thumb_branch(&mut next_request, false)
                 }
                 ThumbInstructionType::LongBranchWithLink => {
-                    self.thumb_long_branch_with_link(&mut next_request, &rsp)
+                    self.thumb_long_branch_with_link(&mut next_request)
                 }
             }
         }

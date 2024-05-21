@@ -1,3 +1,5 @@
+use num_traits::PrimInt;
+
 use crate::arm7_tdmi::instruction::barrel_shifter;
 use crate::arm7_tdmi::instruction::ArmAluOpcode;
 use crate::arm7_tdmi::register_file::ConditionCodeFlag;
@@ -46,10 +48,17 @@ impl ARM7TDMI {
             let is = self.arm_current_execute.get_range(11, 8);
             // Immediate value
             let nn = self.arm_current_execute.get_range(7, 0);
+            // increment for r15 depending on thumb mode
+            let r15_inc = self.rf.get_r15_increment();
 
             let carry_shifter;
-            let mut operand1 = self.rf.get_register(rn, 8);
-            let mut operand2 = self.rf.get_register(rm, 8);
+            let mut operand1 = self.rf.get_register(rn, r15_inc << 1);
+
+            if self.rf.is_thumb_mode() && rn == 15 && rd != 15 {
+                operand1 = operand1 & !2;
+            }
+
+            let mut operand2 = self.rf.get_register(rm, r15_inc << 1);
             let mut there_is_shift = false;
 
             if !self.rf.check_condition_code(condition) {
@@ -95,6 +104,9 @@ impl ARM7TDMI {
             // Write the result back for all the instructions which are not test
             if !ArmAluOpcode::is_test_opcode(opcode) {
                 self.rf.write_register(rd, next_to_write);
+                if self.rf.is_thumb_mode() && rd == 15 {
+                    self.rf.write_register(15, self.rf.get_register(15, 0) & !2);
+                }
             }
 
             // Update flags if the instruction is a test one or if s_flag is set
@@ -130,9 +142,19 @@ impl ARM7TDMI {
                 self.instruction_step = InstructionStep::STEP0;
             }
         } else if self.instruction_step == InstructionStep::STEP2 {
+            if self.rf.is_thumb_mode() {
+                req.mas = TransferSize::HALFWORD;
+            } else {
+                req.mas = TransferSize::WORD;
+            }
             req.address = self.rf.get_register(15, 0);
             self.instruction_step = InstructionStep::STEP3;
         } else if self.instruction_step == InstructionStep::STEP3 {
+            if self.rf.is_thumb_mode() {
+                req.mas = TransferSize::HALFWORD;
+            } else {
+                req.mas = TransferSize::WORD;
+            }
             req.address = self.rf.get_register(15, r15_inc);
             self.rf
                 .write_register(15, self.rf.get_register(15, 0).wrapping_sub(r15_inc));
@@ -152,7 +174,8 @@ impl ARM7TDMI {
     pub fn arm_branch_and_exchange(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
         let condition = self.arm_current_execute.get_range(31, 28);
         let rn = self.arm_current_execute.get_range(3, 0);
-        let mut destination_address = self.rf.get_register(rn, 8);
+        let r15_inc = self.rf.get_r15_increment();
+        let mut destination_address = self.rf.get_register(rn, r15_inc << 1);
         let use_thumb_mode = destination_address.is_bit_set(0);
         destination_address = destination_address.clear_bit(0);
 
@@ -215,15 +238,36 @@ impl ARM7TDMI {
         let opcode = self.arm_current_execute.get_range(24, 24);
         let mut nn = self.arm_current_execute.get_range(23, 0);
         let current_pc = self.rf.get_register(15, 0);
+        let r15_inc = self.rf.get_r15_increment();
 
         if !self.rf.check_condition_code(condition) {
             return;
         }
 
         if self.instruction_step == InstructionStep::STEP0 {
-            // Sign extenstion of the 24 bits immediate. Offset is this value * 4
-            nn |= if nn.is_bit_set(23) { 0xFF000000 } else { 0 };
-            let offset: i32 = (nn as i32) << 2;
+            let offset: i32;
+
+            if self.rf.is_thumb_mode() {
+                offset = if condition != 0xe {
+                    let nn = self.arm_current_execute.get_range(7, 0);
+                    if nn.is_bit_set(7) {
+                        (nn | 0xffffff00) as i32
+                    } else {
+                        nn as i32
+                    }
+                } else {
+                    let nn = self.arm_current_execute.get_range(10, 0);
+                    if nn.is_bit_set(10) {
+                        (nn | 0xfffff800) as i32
+                    } else {
+                        nn as i32
+                    }
+                } << 1;
+            } else {
+                // Sign extenstion of the 24 bits immediate. Offset is this value * 4
+                nn |= if nn.is_bit_set(23) { 0xFF000000 } else { 0 };
+                offset = (nn as i32) << 2;
+            }
 
             self.arm_instruction_queue.clear();
             req.bus_cycle = BusCycle::NONSEQUENTIAL;
@@ -238,20 +282,23 @@ impl ARM7TDMI {
 
             // Increment only by 4 due to the automatic increase of the pc at the end of the
             // instruction
-            self.rf
-                .write_register(15, (current_pc as i32 + offset + 8) as u32);
+            self.rf.write_register(
+                15,
+                (current_pc as i32 + offset + (r15_inc << 1) as i32) as u32
+                    & !(self.rf.is_thumb_mode() as u32),
+            );
 
         // Refill the pipeline in the next two steps
         } else if self.instruction_step == InstructionStep::STEP1 {
             req.address = current_pc;
             self.instruction_step = InstructionStep::STEP2;
         } else if self.instruction_step == InstructionStep::STEP2 {
-            req.address = current_pc.wrapping_add(4);
+            req.address = current_pc.wrapping_add(r15_inc);
             self.rf
-                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(4));
+                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(r15_inc));
             self.instruction_step = InstructionStep::STEP0;
         } else {
-            panic!("Wrong step for instructin type ARM_BRANCH_AND_EXCHANGE");
+            panic!("Wrong step for instructin type ARM_BRANCH");
         }
     }
 
@@ -736,6 +783,43 @@ impl ARM7TDMI {
         // The undefined exception is identical to the swi excpetion in term of functionality
 
         if !self.rf.check_condition_code(condition) {
+            return;
+        }
+
+        if self.rf.is_thumb_mode() {
+            let opcode = self.arm_current_execute.get_range(20, 20);
+            let mut nn = self.arm_current_execute.get_range(18, 8);
+
+            // Thumb 19 first instruction: LR = PC + 4 + (nn SHL 12)
+            if opcode == 0 {
+                // Sign extend offset
+                nn |= 0xfffffc00 * nn.is_bit_set(10) as u32;
+                self.rf
+                    .write_register(14, self.rf.get_register(15, 4).wrapping_add(nn << 12));
+            } else {
+                if self.instruction_step == InstructionStep::STEP0 {
+                    let old_lr = self.rf.get_register(14, 0);
+                    self.rf.write_register(14, self.rf.get_register(15, 3));
+                    self.rf.write_register(15, old_lr.wrapping_add(nn << 1));
+
+                    self.data_is_fetch = false;
+                    self.arm_instruction_queue.clear();
+                    req.bus_cycle = BusCycle::NONSEQUENTIAL;
+                    self.instruction_step = InstructionStep::STEP1;
+
+                // refill pipeline
+                } else if self.instruction_step == InstructionStep::STEP1 {
+                    req.address = self.rf.get_register(15, 0);
+                    self.instruction_step = InstructionStep::STEP2;
+                } else if self.instruction_step == InstructionStep::STEP2 {
+                    req.address = self.rf.get_register(15, 2);
+                    self.rf
+                        .write_register(15, self.rf.get_register(15, 0).wrapping_sub(2));
+                    self.instruction_step = InstructionStep::STEP0;
+                } else {
+                    panic!("Wrong step for instruction BL THUMB");
+                }
+            }
             return;
         }
 

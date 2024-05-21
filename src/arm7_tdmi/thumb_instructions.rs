@@ -73,40 +73,37 @@ impl ARM7TDMI {
 
     /// arm7_tdmi::thumb_alu_immediate
     ///
-    /// Function to execute thumb.4 instructions. In this case, instead of translating the
-    /// instructions, the code is re-implemented.
-    pub fn thumb_alu_immediate(&mut self) {
+    /// Function to execute thumb.4 instructions. It works by translating the opcode to the
+    /// corresponding arm one (ADD, SUB, MOV or CMP)
+    ///
+    /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
+    /// be modified by the function depending on what the current instruction does).
+
+    pub fn thumb_alu_immediate(&mut self, req: &mut MemoryRequest) {
         let opcode = self.arm_current_execute.get_range(12, 11);
         let rd = self.arm_current_execute.get_range(10, 8);
         let nn = self.arm_current_execute.get_range(7, 0);
-        let (result, c_flag, v_flag): (u32, bool, bool);
 
-        // MOVS Rd, #nn
-        if opcode == 0 {
-            (result, c_flag, v_flag) = self.alu_operation(0, nn, ArmAluOpcode::MOV);
-            self.rf.write_register(rd, result);
-            self.update_flags(result, ArmAluOpcode::MOV, rd, c_flag, false, v_flag);
+        let mut arm_instruction = 0b1110_0010_0001_0000_0000_0000_0000_0000;
+        let current_instruction = self.arm_current_execute;
 
-        // CMP Rd, #nn
+        arm_instruction |= rd << 12;
+        arm_instruction |= rd << 16;
+        arm_instruction |= nn << 0;
+
+        arm_instruction |= if opcode == 0 {
+            ArmAluOpcode::MOV as u32
         } else if opcode == 1 {
-            (result, c_flag, v_flag) =
-                self.alu_operation(self.rf.get_register(rd, 0), nn, ArmAluOpcode::CMP);
-            self.update_flags(result, ArmAluOpcode::CMP, rd, c_flag, false, v_flag);
-
-        // ADDS Rd, #nn
+            ArmAluOpcode::CMP as u32
         } else if opcode == 2 {
-            (result, c_flag, v_flag) =
-                self.alu_operation(self.rf.get_register(rd, 0), nn, ArmAluOpcode::ADD);
-            self.rf.write_register(rd, result);
-            self.update_flags(result, ArmAluOpcode::ADD, rd, c_flag, false, v_flag);
-
-        // SUBS Rd, #nn
+            ArmAluOpcode::ADD as u32
         } else {
-            (result, c_flag, v_flag) =
-                self.alu_operation(self.rf.get_register(rd, 0), nn, ArmAluOpcode::SUB);
-            self.rf.write_register(rd, result);
-            self.update_flags(result, ArmAluOpcode::SUB, rd, c_flag, false, v_flag);
-        }
+            ArmAluOpcode::SUB as u32
+        } << 21;
+
+        self.arm_current_execute = arm_instruction;
+        self.arm_data_processing(req);
+        self.arm_current_execute = current_instruction;
     }
 
     /// arm7_tdmi::thumb_alu
@@ -187,112 +184,34 @@ impl ARM7TDMI {
         let full_rd = if msbd == 1 { rd | 0x8 } else { rd };
         let full_rs = if msbs == 1 { rs | 0x8 } else { rs };
 
-        let bx_address = self.rf.get_register(full_rs, 4);
+        let current_instruction = self.arm_current_execute;
 
-        if self.instruction_step == InstructionStep::STEP0 {
-            // Add rd, rs
-            if opcode == 0 {
-                let op1 = self.rf.get_register(full_rd, 4);
-                let op2 = self.rf.get_register(full_rs, 4);
-                let (result, _, _) = self.alu_operation(op1, op2, ArmAluOpcode::ADD);
-                self.rf.write_register(full_rd, result);
+        if opcode <= 2 {
+            let mut arm_instruction = 0b1110_0000_0000_0000_0000_0000_0000_0000;
 
-                // Need to refill pipeline in case of r15 as destination
-                if full_rd == 15 {
-                    self.rf
-                        .write_register(full_rd, self.rf.get_register(15, 0) & !2);
-                    self.arm_instruction_queue.clear();
-                    req.bus_cycle = BusCycle::NONSEQUENTIAL;
-                    self.data_is_fetch = false;
-                    self.instruction_step = InstructionStep::STEP1;
-                }
-
-            // cmp rd, rs
+            arm_instruction |= if opcode == 0 {
+                ArmAluOpcode::ADD as u32
             } else if opcode == 1 {
-                let op1 = self.rf.get_register(full_rd, 4);
-                let op2 = self.rf.get_register(full_rs, 4);
-                let (result, c_flag, v_flag) = self.alu_operation(op1, op2, ArmAluOpcode::CMP);
-                self.update_flags(result, ArmAluOpcode::CMP, full_rd, c_flag, true, v_flag);
-
-            // mov rd, rs
-            } else if opcode == 2 {
-                let op1 = self.rf.get_register(full_rd, 4);
-                let op2 = self.rf.get_register(full_rs, 4);
-                let (result, _, _) = self.alu_operation(op1, op2, ArmAluOpcode::MOV);
-                self.rf.write_register(full_rd, result);
-
-                // Need to refill pipeline in case of r15 as destination
-                if full_rd == 15 {
-                    self.rf.write_register(15, self.rf.get_register(15, 0) & !1);
-                    self.arm_instruction_queue.clear();
-                    req.bus_cycle = BusCycle::NONSEQUENTIAL;
-                    self.data_is_fetch = false;
-                    self.instruction_step = InstructionStep::STEP1;
-                }
-
-            // bx rs
+                ArmAluOpcode::CMP as u32
             } else {
-                self.arm_instruction_queue.clear();
-                req.bus_cycle = BusCycle::NONSEQUENTIAL;
-                self.data_is_fetch = false;
-                self.instruction_step = InstructionStep::STEP3;
-            }
+                ArmAluOpcode::MOV as u32
+            } << 21;
 
-        // STEP1 and STEP2 are to refill the pipeline in case of r15 as destination
-        } else if self.instruction_step == InstructionStep::STEP1 {
-            req.address = self.rf.get_register(15, 0);
-            req.bus_cycle = BusCycle::SEQUENTIAL;
-            self.instruction_step = InstructionStep::STEP2;
-        } else if self.instruction_step == InstructionStep::STEP2 {
-            req.address = self.rf.get_register(15, 2);
-            self.rf
-                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(2));
-            self.instruction_step = InstructionStep::STEP0;
+            arm_instruction |= full_rd << 12;
+            arm_instruction |= full_rd << 16;
+            arm_instruction |= full_rs << 0;
 
-        // STEP3 and STEP4 are to refill the pipeline in case of bx, possibly switching back
-        // to arm mode
-        } else if self.instruction_step == InstructionStep::STEP3 {
-            if bx_address.is_bit_set(0) {
-                req.mas = TransferSize::HALFWORD;
-            } else {
-                req.mas = TransferSize::WORD;
-            }
-            req.address = bx_address;
-            req.bus_cycle = BusCycle::SEQUENTIAL;
-            self.data_is_fetch = false;
-            self.instruction_step = InstructionStep::STEP4;
-        } else if self.instruction_step == InstructionStep::STEP4 {
-            if msbd == 1 {
-                self.rf.write_register(14, self.rf.get_register(15, 0))
-            }
-
-            // thumb mode
-            if bx_address.is_bit_set(0) {
-                if self.last_used_address.is_bit_clear(1) {
-                    self.arm_instruction_queue
-                        .push_back(rsp.data.get_range(15, 0));
-                } else {
-                    self.arm_instruction_queue
-                        .push_back(rsp.data.get_range(31, 16));
-                }
-                req.mas = TransferSize::HALFWORD;
-                req.address = bx_address.wrapping_add(2);
-                self.rf.write_register(15, bx_address.wrapping_sub(2));
-                let _ = self.rf.write_cpsr(self.rf.get_cpsr().set_bit(5));
-
-            // arm mode
-            } else {
-                req.mas = TransferSize::WORD;
-                req.address = bx_address.wrapping_add(4);
-                self.arm_instruction_queue.push_back(rsp.data);
-                self.rf.write_register(15, bx_address.wrapping_sub(4));
-                let _ = self.rf.write_cpsr(self.rf.get_cpsr().clear_bit(5));
-            }
-            req.bus_cycle = BusCycle::SEQUENTIAL;
-            self.instruction_step = InstructionStep::STEP0;
+            self.arm_current_execute = arm_instruction;
+            self.arm_data_processing(req);
         } else {
-            panic!("Wrong step for THUMB HI REGISTER BX");
+            let mut arm_instruction = 0b1110_0001_0010_1111_1111_1111_0001_0000;
+            arm_instruction |= full_rs << 0;
+
+            self.arm_current_execute = arm_instruction;
+            self.arm_branch_and_exchange(req, rsp);
         }
+
+        self.arm_current_execute = current_instruction;
     }
 
     /// arm7_tdmi::thumb_pc_relative_load
@@ -487,35 +406,49 @@ impl ARM7TDMI {
     ///
     /// Function to execute thumb.12 instructions. As the operation is straightforward, it had been
     /// re-implemented.
-    pub fn thumb_load_address(&mut self) {
+    pub fn thumb_load_address(&mut self, req: &mut MemoryRequest) {
         let opcode = self.arm_current_execute.get_range(11, 11);
         let rd = self.arm_current_execute.get_range(10, 8);
-        let nn = self.arm_current_execute.get_range(7, 0) << 2;
+        let nn = self.arm_current_execute.get_range(7, 0);
 
-        if opcode == 0 {
-            self.rf
-                .write_register(rd, (self.rf.get_register(15, 4) & !2).wrapping_add(nn));
-        } else {
-            self.rf
-                .write_register(rd, self.rf.get_register(13, 0).wrapping_add(nn));
-        }
+        let mut arm_instruction = 0b1110_0010_0000_0000_0000_1111_0000_0000;
+        let current_instruction = self.arm_current_execute;
+
+        arm_instruction |= rd << 12;
+        arm_instruction |= if opcode == 0 { 15 } else { 13 } << 16;
+        arm_instruction |= nn << 0;
+
+        arm_instruction |= (ArmAluOpcode::ADD as u32) << 21;
+
+        self.arm_current_execute = arm_instruction;
+        self.arm_data_processing(req);
+        self.arm_current_execute = current_instruction;
     }
 
     /// arm7_tdmi::thumb_sp_relative_load_store
     ///
     /// Function to execute thumb.13 instructions. As the operation is straightforward, it had been
     /// re-implemented.
-    pub fn thumb_add_offset_to_sp(&mut self) {
+    pub fn thumb_add_offset_to_sp(&mut self, req: &mut MemoryRequest) {
         let opcode = self.arm_current_execute.get_range(7, 7);
-        let nn = self.arm_current_execute.get_range(6, 0) << 2;
+        let nn = self.arm_current_execute.get_range(6, 0);
 
-        if opcode == 0 {
-            self.rf
-                .write_register(13, self.rf.get_register(13, 0).wrapping_add(nn));
+        let mut arm_instruction = 0b1110_0010_0000_0000_0000_1111_0000_0000;
+        let current_instruction = self.arm_current_execute;
+
+        arm_instruction |= 13 << 12;
+        arm_instruction |= 13 << 16;
+        arm_instruction |= nn << 0;
+
+        arm_instruction |= if opcode == 0 {
+            ArmAluOpcode::ADD as u32
         } else {
-            self.rf
-                .write_register(13, self.rf.get_register(13, 0).wrapping_sub(nn));
-        }
+            ArmAluOpcode::SUB as u32
+        } << 21;
+
+        self.arm_current_execute = arm_instruction;
+        self.arm_data_processing(req);
+        self.arm_current_execute = current_instruction;
     }
 
     /// arm7_tdmi::thumb_push_pop_register
@@ -596,49 +529,22 @@ impl ARM7TDMI {
     /// @param rsp [&MemoryResponse]: response from the memory
     pub fn thumb_branch(&mut self, req: &mut MemoryRequest, cond_branch: bool) {
         let opcode = self.arm_current_execute.get_range(11, 8);
+        let nn = self.arm_current_execute.get_range(10, 0);
 
-        // different offsets are used in conditional and non-conditional cases
-        let offset = if cond_branch {
-            let nn = self.arm_current_execute.get_range(7, 0);
-            if nn.is_bit_set(7) {
-                nn | 0xffffff00
-            } else {
-                nn
-            }
+        let current_instruction = self.arm_current_execute;
+        let mut arm_instruction = 0b0000_1010_0000_0000_0000_0000_0000_0000;
+
+        if cond_branch {
+            arm_instruction |= opcode << 28;
         } else {
-            let nn = self.arm_current_execute.get_range(10, 0);
-            if nn.is_bit_set(10) {
-                nn | 0xfffff800
-            } else {
-                nn
-            }
-        } << 1;
-
-        // conditional branch requires the condition to be satisfied in order to branch
-        if cond_branch && !self.rf.check_condition_code(opcode) {
-            return;
+            arm_instruction |= 0xe << 28;
         }
 
-        // Next steps consist in refilling the pipeline
-        if self.instruction_step == InstructionStep::STEP0 {
-            // modify r15
-            self.rf
-                .write_register(15, self.rf.get_register(15, 4).wrapping_add(offset) & !1);
-            self.arm_instruction_queue.clear();
-            req.bus_cycle = BusCycle::NONSEQUENTIAL;
-            self.data_is_fetch = false;
-            self.instruction_step = InstructionStep::STEP1;
-        } else if self.instruction_step == InstructionStep::STEP1 {
-            req.address = self.rf.get_register(15, 0);
-            self.instruction_step = InstructionStep::STEP2;
-        } else if self.instruction_step == InstructionStep::STEP2 {
-            req.address = self.rf.get_register(15, 2);
-            self.rf
-                .write_register(15, (self.rf.get_register(15, 0)).wrapping_sub(2));
-            self.instruction_step = InstructionStep::STEP0;
-        } else {
-            panic!("Wrong instruction step for THUMB BRANCH")
-        }
+        arm_instruction |= nn << 0;
+
+        self.arm_current_execute = arm_instruction;
+        self.arm_branch(req);
+        self.arm_current_execute = current_instruction;
     }
 
     /// arm7_tdmi::thumb_software_interrupt
@@ -661,61 +567,24 @@ impl ARM7TDMI {
     /// arm7_tdmi::thumb_long_branch_with_link
     ///
     /// Function to execute thumb.19 instructions. Due to the peculiarities of this thumb
-    /// instructions (made of 32 bits instead of 1) it has been reimplemented.
+    /// instructions compared to arm functionalities, some special operations are implemented
+    /// within the `arm_undefined` opcode, to be used on in thumb mode.
     ///
     /// @param req [&mut MemoryRequest]: request to be sent to the bus for the current cycle (might
     /// be modified by the function depending on what the current instruction does).
     /// @param rsp [&MemoryResponse]: response from the memory
-    pub fn thumb_long_branch_with_link(&mut self, req: &mut MemoryRequest, rsp: &MemoryResponse) {
-        // fetch next opcode
-        if self.instruction_step == InstructionStep::STEP0 {
-            self.data_is_fetch = false;
-            req.address = self.rf.get_register(15, 2);
-            req.bus_cycle = BusCycle::NONSEQUENTIAL;
-            self.instruction_step = InstructionStep::STEP1;
+    pub fn thumb_long_branch_with_link(&mut self, req: &mut MemoryRequest) {
+        let opcode = self.arm_current_execute.get_range(11, 11);
+        let nn = self.arm_current_execute.get_range(10, 0);
 
-        // compute next address
-        } else if self.instruction_step == InstructionStep::STEP1 {
-            let mut received_data = rsp.data;
+        let current_instruction = self.arm_current_execute;
+        let mut arm_instruction = 0b1110_0110_0000_0000_0000_0000_0001_0000;
 
-            // The second opcode might be on the upper half of the read word
-            if self.last_used_address.is_bit_set(1) {
-                received_data >>= 16;
-            } else {
-                received_data &= 0xffff;
-            }
+        arm_instruction |= opcode << 20;
+        arm_instruction |= nn << 8;
 
-            // Compute jumping offset
-            let mut offset = (self.arm_current_execute.get_range(10, 0) << 12)
-                + (received_data.get_range(10, 0) << 1);
-
-            // Sign extend offset
-            if offset.is_bit_set(22) {
-                offset |= 0xffc00000;
-            }
-
-            // Next address
-            let dest_address = self.rf.get_register(15, 4).wrapping_add(offset);
-
-            self.rf.write_register(14, self.rf.get_register(15, 5));
-            self.rf.write_register(15, dest_address);
-
-            self.data_is_fetch = false;
-            self.arm_instruction_queue.clear();
-            req.bus_cycle = BusCycle::NONSEQUENTIAL;
-            self.instruction_step = InstructionStep::STEP2;
-
-        // refill pipeline
-        } else if self.instruction_step == InstructionStep::STEP2 {
-            req.address = self.rf.get_register(15, 0);
-            self.instruction_step = InstructionStep::STEP3;
-        } else if self.instruction_step == InstructionStep::STEP3 {
-            req.address = self.rf.get_register(15, 2);
-            self.rf
-                .write_register(15, self.rf.get_register(15, 0).wrapping_sub(2));
-            self.instruction_step = InstructionStep::STEP0;
-        } else {
-            panic!("Wrong step for instruction BL THUMB");
-        }
+        self.arm_current_execute = arm_instruction;
+        self.arm_undefined(req);
+        self.arm_current_execute = current_instruction;
     }
 }
